@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track, type RemoteTrack } from "livekit-client";
+import {
+  Room,
+  RoomEvent,
+  Track,
+  type RemoteParticipant,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+} from "livekit-client";
 
 import type { BroadcastStatus } from "@/lib/types";
 
@@ -15,6 +22,12 @@ import type { BroadcastStatus } from "@/lib/types";
  *   2. We ask our own server for a listen-only token (POST, never cached).
  *   3. We connect to LiveKit and attach the first audio track we're subscribed
  *      to onto a plain <audio> element.
+ *
+ * AUDIO ONLY, DELIBERATELY. Encoders like OBS always send a video track, and
+ * the LiveKit ingress republishes it. Left alone, every listener would download
+ * that video and never see a pixel of it — a large, invisible mobile data bill.
+ * So we connect with `autoSubscribe: false` and subscribe only to audio
+ * publications. Video reaches LiveKit but never reaches a fan.
  *
  * No account, no publishing permission, and no LiveKit secret in the browser.
  *
@@ -114,7 +127,20 @@ export function ListenLivePlayer({
     const room = new Room({ adaptiveStream: false, dynacast: false });
     roomRef.current = room;
 
+    /** Subscribe to a publication only when it carries audio. */
+    const subscribeIfAudio = (publication: RemoteTrackPublication) => {
+      if (publication.kind === Track.Kind.Audio && !publication.isSubscribed) {
+        publication.setSubscribed(true);
+      }
+    };
+
+    const subscribeAudioOf = (participant: RemoteParticipant) => {
+      participant.trackPublications.forEach(subscribeIfAudio);
+    };
+
     room
+      .on(RoomEvent.TrackPublished, subscribeIfAudio)
+      .on(RoomEvent.ParticipantConnected, subscribeAudioOf)
       .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind !== Track.Kind.Audio) return;
         const element = audioRef.current;
@@ -139,7 +165,13 @@ export function ListenLivePlayer({
       });
 
     try {
-      await room.connect(payload.url, payload.token);
+      // autoSubscribe: false — see the note at the top of this file. Without it
+      // the client pulls the ingress's video track and throws it away.
+      await room.connect(payload.url, payload.token, { autoSubscribe: false });
+
+      // Anything already published before we joined (the usual case: the
+      // broadcast was live first) needs subscribing explicitly.
+      room.remoteParticipants.forEach(subscribeAudioOf);
       // Safari in particular needs an explicit nudge inside the gesture.
       await room.startAudio().catch(() => undefined);
       setState((current) => (current === "playing" ? current : "buffering"));

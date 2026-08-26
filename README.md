@@ -354,10 +354,45 @@ Milestone 4 — the one that matters. You need Supabase and LiveKit configured.
 3. **Point your encoder at it.**
 
    *OBS:* Settings → Stream → Service: **Custom…** → paste the Stream URL into
-   **Server** and the key into **Stream Key**. Under Settings → Output, an audio
-   bitrate of 128 kbps is plenty for a game call. Click **Start Streaming**.
+   **Server** and the key into **Stream Key**. Then apply the audio-only
+   settings below. Click **Start Streaming**.
 
    *Restream:* add a **Custom RTMP** destination with the same two values.
+
+### Audio-only, with a video-capable encoder
+
+FluxCast is an audio product, but OBS and Restream always send a video track —
+neither can turn video off. What happens to it:
+
+| Stage | Video |
+|---|---|
+| OBS → LiveKit | Sent. Uses the school's upload bandwidth |
+| LiveKit ingress | Transcoded and published into the room |
+| LiveKit → fan | **Never sent.** The player subscribes to audio only |
+
+The listener side is handled in code: the player connects with
+`autoSubscribe: false` and subscribes only to audio publications, so a fan
+never downloads a video track they cannot see. Without that, every listener
+would quietly pay for invisible video on their mobile data.
+
+The upstream half is a settings problem, so make the video as cheap as
+possible in OBS:
+
+- **Sources** — one static image or a colour source. No camera, no capture.
+  A still frame costs an encoder almost nothing.
+- **Settings → Video** — Base and Output resolution `256x144`, FPS `10`.
+- **Settings → Output** (Advanced mode) → Streaming → video bitrate
+  `100 kbps`, and if available set the encoder tuning to `stillimage`.
+- **Settings → Output** → Audio → bitrate `128 kbps`. This is the one that
+  matters. 160 kbps if there is music or crowd ambience you care about.
+- **Settings → Audio** — sample rate `48 kHz`, and set your commentary mic or
+  mixer feed as the input. Mute desktop audio unless you want it on air.
+
+That is roughly 230 kbps upstream, most of it the audio you actually want.
+
+LiveKit still bills for transcoding the video track, so a purpose-built
+audio-only RTMP encoder (ffmpeg with a null video source, or a hardware audio
+encoder) would be cheaper still. Not needed for the prototype.
 
 4. **Watch the status.** The admin page moves `Ready → Connected → Live` on its
    own within a few seconds of the encoder connecting.
