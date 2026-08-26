@@ -220,7 +220,10 @@ It reports, for the *running server*:
 - For each of the six variables: present or missing, **which variable name
   supplied it**, and whether a fallback name was used
 - Whether the database actually answers, for both the publishable key (the path
-  fans use, through RLS) and the service role key (the path admin writes use)
+  fans use, through RLS) and the service role key (the path admin writes use).
+  A reachability probe runs only when one of those fails, to say whether the
+  URL, the network or the key is at fault — a successful query is already
+  proof the endpoint is reachable, so the probe never second-guesses one
 - Row counts per table, which tells you whether the migration and the seed both
   ran
 
@@ -240,11 +243,11 @@ Other causes it will identify for you:
 |---|---|
 | A variable `missing` | Not set, or set in a different Vercel environment (Production vs. Preview) than the one you're viewing |
 | `read from NEXT_PUBLIC_…  — fallback name` | Works, but rename it to the plain name |
-| **Endpoint reachable** fails, no HTTP status | Wrong project URL, or the Supabase project is paused. The unwrapped cause (e.g. `getaddrinfo ENOTFOUND`) is shown |
-| **Endpoint reachable** returns 401/403 | Reached the host but the key was rejected |
-| **Endpoint reachable** returns 404 | Reached a server, but not a Supabase API — usually a URL with a leftover path |
-| Endpoint OK, public read fails | RLS policies didn't run — re-run the migration |
-| Endpoint OK, service read fails | Service role key is wrong |
+| **Public read** fails | RLS policies didn't run — re-run the migration |
+| **Service role read** fails | Service role key is wrong |
+| Probe fails with no HTTP status | Wrong project URL, or the Supabase project is paused. The unwrapped cause (e.g. `getaddrinfo ENOTFOUND`) is shown |
+| Probe returns 401/403 | Reached the host but the key was rejected |
+| Probe returns 404 | Reached a server, but not a Supabase API — usually a URL with a leftover path |
 | Either read shows code `42P01` | Table doesn't exist — the migration hasn't run *in this project* |
 | All tables `0 rows` | Migration ran, seed didn't — run `supabase/seed.sql` |
 

@@ -58,8 +58,17 @@ export interface Diagnostics {
   supabaseConfigured: boolean;
   livekitConfigured: boolean;
   env: EnvCheck[];
-  /** Raw HTTPS reachability of the Supabase REST endpoint. */
-  reachability: { ok: boolean; status: number | null; error: string | null } | null;
+  /**
+   * Reachability of the Supabase REST endpoint. When the queries below
+   * succeeded, this is inferred from them rather than probed — a successful
+   * query is stronger evidence than any probe.
+   */
+  reachability: {
+    ok: boolean;
+    status: number | null;
+    error: string | null;
+    inferred: boolean;
+  } | null;
   /** Null when Supabase is not configured, so no connection was attempted. */
   publicRead: ConnResult | null;
   serviceRead: ConnResult | null;
@@ -128,8 +137,6 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
   let publicRead: ConnResult | null = null;
   let serviceRead: ConnResult | null = null;
   const tables: TableCheck[] = [];
-  const reachability = await checkReachability();
-
   if (isSupabaseConfigured) {
     // Does the publishable key + RLS actually let a fan read data?
     try {
@@ -160,6 +167,18 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
       serviceRead = connResult(error);
     }
   }
+
+  /**
+   * A successful query proves the endpoint is reachable, so only probe when
+   * something failed and needs explaining. Probing unconditionally let a
+   * quirk of the probe contradict two queries that had plainly worked.
+   */
+  const readsSucceeded = publicRead?.ok === true && serviceRead?.ok === true;
+  const reachability: Diagnostics["reachability"] = !isSupabaseConfigured
+    ? null
+    : readsSucceeded
+      ? { ok: true, status: null, error: null, inferred: true }
+      : await checkReachability();
 
   return {
     dataMode,
@@ -323,13 +342,18 @@ async function checkReachability(): Promise<Diagnostics["reachability"]> {
   if (!serverEnv.supabaseUrl) return null;
   try {
     const response = await fetch(`${serverEnv.supabaseUrl.replace(/\/$/, "")}/rest/v1/`, {
-      headers: { apikey: serverEnv.supabasePublishableKey },
+      headers: {
+        // Supabase wants both. Sending only `apikey` gets a 401 from the
+        // PostgREST root even when the key is perfectly valid.
+        apikey: serverEnv.supabasePublishableKey,
+        Authorization: `Bearer ${serverEnv.supabasePublishableKey}`,
+      },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });
-    return { ok: response.ok, status: response.status, error: null };
+    return { ok: response.ok, status: response.status, error: null, inferred: false };
   } catch (error) {
-    return { ok: false, status: null, error: describe(error) };
+    return { ok: false, status: null, error: describe(error), inferred: false };
   }
 }
 

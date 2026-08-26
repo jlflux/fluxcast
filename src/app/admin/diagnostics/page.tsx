@@ -105,7 +105,7 @@ export default async function DiagnosticsPage() {
         <>
           <Card
             title="Database connection"
-            description="Reachability is plain HTTPS to the Supabase endpoint. If it fails, the URL or the network is the problem and the two reads below cannot succeed either."
+            description="The two reads are the real test. The reachability probe only runs when one of them fails, to say whether the URL, the network or the key is at fault."
           >
             <div className="flex flex-col gap-4">
               {d.reachability && (
@@ -115,6 +115,11 @@ export default async function DiagnosticsPage() {
                     {d.reachability.status !== null && (
                       <span className="ml-2 font-mono text-xs text-ink-400">
                         HTTP {d.reachability.status}
+                      </span>
+                    )}
+                    {d.reachability.inferred && (
+                      <span className="ml-2 text-xs font-normal text-ink-400">
+                        confirmed by the queries below
                       </span>
                     )}
                   </p>
