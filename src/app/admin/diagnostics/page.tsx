@@ -45,6 +45,19 @@ export default async function DiagnosticsPage() {
         </section>
       )}
 
+      {d.urlNormalisedFrom && (
+        <section className="mb-6 rounded-lg border border-flux-500/25 bg-flux-500/5 p-4">
+          <p className="text-sm text-ink-200">
+            <span className="font-semibold">Supabase URL trimmed to its origin.</span> You
+            configured{" "}
+            <code className="font-mono text-xs text-ink-300">{d.urlNormalisedFrom}</code>, which
+            is the REST endpoint the dashboard displays. FluxCast appends the service path
+            itself, so it is using the origin. Nothing to fix — this is just so the difference
+            is visible.
+          </p>
+        </section>
+      )}
+
       <Card title="Status">
         <dl className="grid gap-3 sm:grid-cols-2">
           <Stat

@@ -57,8 +57,31 @@ export function envSourceName(...names: string[]): string | null {
   return null;
 }
 
+/**
+ * Reduce a Supabase URL to its origin.
+ *
+ * Supabase's dashboard displays the *REST endpoint*
+ * (`https://<ref>.supabase.co/rest/v1/`) under Data API, so that is what people
+ * copy. supabase-js expects the origin and appends `/rest/v1/` itself, which
+ * would otherwise produce `.../rest/v1/rest/v1/` and a 404 on every query.
+ *
+ * Nobody ever means the doubled path, so trimming a trailing service path is
+ * safe and saves a genuinely confusing failure. The diagnostics page reports
+ * when this trimming happened, so it is visible rather than silent.
+ */
+export function normalizeSupabaseUrl(value: string): string {
+  if (!value) return "";
+  return value
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/(rest|auth|storage|realtime|graphql|functions)\/v\d+$/i, "")
+    .replace(/\/+$/, "");
+}
+
 export const serverEnv = {
-  supabaseUrl: envValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"),
+  supabaseUrl: normalizeSupabaseUrl(
+    envValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"),
+  ),
   supabasePublishableKey: envValue(
     "SUPABASE_PUBLISHABLE_KEY",
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
@@ -84,6 +107,9 @@ export const isLiveKitConfigured =
   serverEnv.livekitUrl.length > 0 &&
   serverEnv.livekitApiKey.length > 0 &&
   serverEnv.livekitApiSecret.length > 0;
+
+/** The Supabase URL exactly as configured, before normalisation. */
+export const rawSupabaseUrl = envValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL");
 
 export type DataMode = "supabase" | "mock";
 export type StreamingMode = "livekit" | "mock";

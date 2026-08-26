@@ -111,7 +111,11 @@ Milestone 2: persist real events and broadcasts.
 
 1. Create a project at <https://supabase.com/dashboard>. Save the database
    password somewhere safe.
-2. In **Project Settings → Data API**, copy the **Project URL**.
+2. In **Project Settings → Data API**, copy the **Project URL**. You want the
+   origin — `https://your-project.supabase.co`. The dashboard shows the REST
+   endpoint with `/rest/v1/` on the end; FluxCast trims that for you (and says
+   so on the diagnostics page), but the origin is the correct value. Left
+   untrimmed it would produce `.../rest/v1/rest/v1/` and 404 every query.
 3. In **Project Settings → API Keys**, copy:
    - the **publishable key** (`sb_publishable_…`) — safe for the browser
    - the **secret / service_role key** — server only, never expose it
@@ -238,7 +242,7 @@ Other causes it will identify for you:
 | `read from NEXT_PUBLIC_…  — fallback name` | Works, but rename it to the plain name |
 | **Endpoint reachable** fails, no HTTP status | Wrong project URL, or the Supabase project is paused. The unwrapped cause (e.g. `getaddrinfo ENOTFOUND`) is shown |
 | **Endpoint reachable** returns 401/403 | Reached the host but the key was rejected |
-| **Endpoint reachable** returns 404 | Reached a server, but not a Supabase API |
+| **Endpoint reachable** returns 404 | Reached a server, but not a Supabase API — usually a URL with a leftover path |
 | Endpoint OK, public read fails | RLS policies didn't run — re-run the migration |
 | Endpoint OK, service read fails | Service role key is wrong |
 | Either read shows code `42P01` | Table doesn't exist — the migration hasn't run *in this project* |

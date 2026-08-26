@@ -5,6 +5,7 @@ import {
   envSourceName,
   isLiveKitConfigured,
   isSupabaseConfigured,
+  rawSupabaseUrl,
   serverEnv,
   streamingMode,
 } from "@/lib/env.server";
@@ -64,6 +65,8 @@ export interface Diagnostics {
   serviceRead: ConnResult | null;
   /** Problems spotted in the *shape* of a configured value. */
   warnings: string[];
+  /** Set when the configured Supabase URL was trimmed to its origin. */
+  urlNormalisedFrom: string | null;
   tables: TableCheck[];
   deployment: { label: string; value: string }[];
 }
@@ -168,6 +171,10 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
     publicRead,
     serviceRead,
     warnings: configWarnings(),
+    urlNormalisedFrom:
+      rawSupabaseUrl && rawSupabaseUrl.trim() !== serverEnv.supabaseUrl
+        ? rawSupabaseUrl.trim()
+        : null,
     tables,
     deployment: deploymentInfo(),
   };
@@ -256,7 +263,7 @@ function configWarnings(): string[] {
       host = parsed.host;
       if (parsed.pathname !== "/" && parsed.pathname !== "") {
         warnings.push(
-          `The Supabase URL has a path ("${parsed.pathname}"). It should be just the origin, e.g. https://your-project.supabase.co`,
+          `The Supabase URL still has a path ("${parsed.pathname}") after normalisation. It should be just the origin, e.g. https://your-project.supabase.co`,
         );
       }
       if (parsed.protocol !== "https:") {
