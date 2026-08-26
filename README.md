@@ -25,11 +25,12 @@ Homewood broadcast audio
 3. [Supabase setup](#supabase-setup)
 4. [LiveKit setup](#livekit-setup)
 5. [Environment variables](#environment-variables)
-6. [Database migrations and seed](#database-migrations-and-seed)
-7. [Testing an RTMP broadcast](#testing-an-rtmp-broadcast)
-8. [Deploying to Vercel](#deploying-to-vercel)
-9. [Design decisions](#design-decisions)
-10. [Project structure](#project-structure)
+6. [Diagnostics](#diagnostics)
+7. [Database migrations and seed](#database-migrations-and-seed)
+8. [Testing an RTMP broadcast](#testing-an-rtmp-broadcast)
+9. [Deploying to Vercel](#deploying-to-vercel)
+10. [Design decisions](#design-decisions)
+11. [Project structure](#project-structure)
 
 ---
 
@@ -202,6 +203,45 @@ reintroducing a build-time public variable.
 
 ---
 
+## Diagnostics
+
+`/admin/diagnostics` is a configuration self-check. Open it whenever FluxCast
+says **Development mode** and you expected it not to. The banner links straight
+to it.
+
+It reports, for the *running server*:
+
+- Which mode data and streaming are in
+- Which build is deployed (Vercel environment, branch, commit)
+- For each of the six variables: present or missing, **which variable name
+  supplied it**, and whether a fallback name was used
+- Whether the database actually answers, for both the publishable key (the path
+  fans use, through RLS) and the service role key (the path admin writes use)
+- Row counts per table, which tells you whether the migration and the seed both
+  ran
+
+Secret values are never displayed — only presence and character count, which is
+enough to catch a truncated paste.
+
+### If a deployment says "not configured" after you added the variables
+
+The most common cause is that **environment variables apply when a deployment is
+created, not retroactively.** Adding them in the dashboard does nothing to a
+deployment that already exists — you have to redeploy. Check the commit shown
+under **Deployment** on the diagnostics page against your latest push.
+
+Other causes it will identify for you:
+
+| Diagnostics shows | Cause |
+|---|---|
+| A variable `missing` | Not set, or set in a different Vercel environment (Production vs. Preview) than the one you're viewing |
+| `read from NEXT_PUBLIC_…  — fallback name` | Works, but rename it to the plain name |
+| Variables present, public read fails | RLS policies didn't run — re-run the migration |
+| Variables present, service read fails | Service role key is wrong |
+| All tables `0 rows` | Migration ran, seed didn't — run `supabase/seed.sql` |
+
+---
+
 ## Database migrations and seed
 
 SQL lives in `supabase/`:
@@ -320,7 +360,9 @@ Milestone 4 — the one that matters. You need Supabase and LiveKit configured.
    for the Production (and Preview) environments. None of them take a
    `NEXT_PUBLIC_` prefix, so all six can be stored as secrets without Vercel
    objecting — see [Why no `NEXT_PUBLIC_` prefix](#why-no-next_public_-prefix).
-4. Deploy.
+4. Deploy. **If you add or change a variable later, redeploy** — Vercel applies
+   environment variables when a deployment is created, not retroactively.
+5. Open `/admin/diagnostics` on the deployed site to confirm what it can see.
 
 Everything is serverless-compatible: no long-running processes, no websocket
 server of our own, no filesystem writes. Audio never flows through Vercel — the
@@ -407,6 +449,7 @@ src/
       page.tsx               Dashboard: live / today / upcoming
       broadcasts/new/        Create broadcast form
       broadcasts/[id]/       Manage a broadcast, stream credentials
+      diagnostics/           Configuration self-check
     api/broadcasts/[slug]/
       listen/route.ts        Mints listen-only LiveKit tokens
       status/route.ts        Current broadcast status (polled)
@@ -421,6 +464,7 @@ src/
     livekit/               Ingress, tokens, status mapping, status sync
     supabase/              Client factories and database types
     auth.ts                requireAdmin() — the single admin authorization point
+    diagnostics.ts         Configuration self-check data
     env.server.ts         Server-only environment access + mode detection
     format.ts, slug.ts, types.ts
 supabase/

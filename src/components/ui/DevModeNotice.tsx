@@ -4,6 +4,8 @@
  * The point is that nothing in FluxCast ever quietly pretends an external
  * service is connected — if it is fake, it says so, on screen.
  */
+import Link from "next/link";
+
 export function DevModeNotice({
   dataMode,
   streamingMode,
@@ -26,6 +28,12 @@ export function DevModeNotice({
           {missing.join(" and ")} {missing.length > 1 ? "are" : "is"} not configured. Data and
           stream credentials on this page are stand-ins, not real.
         </span>
+        <Link
+          href="/admin/diagnostics"
+          className="font-semibold text-amber-200 underline underline-offset-2 transition hover:text-amber-100"
+        >
+          Why?
+        </Link>
       </div>
     </div>
   );

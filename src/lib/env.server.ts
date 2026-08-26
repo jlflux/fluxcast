@@ -30,13 +30,31 @@ import "server-only";
  * rather than reintroducing a build-time public variable.
  */
 
-/** First non-empty value wins. */
+/**
+ * First non-empty value wins.
+ *
+ * Values are trimmed and stripped of surrounding quotes. Pasting a value into a
+ * hosting dashboard very easily picks up a trailing newline or a pair of
+ * quotes, and the resulting failure ("not configured", or a 401 from Supabase)
+ * gives no hint that whitespace is the cause.
+ */
 function envValue(...names: string[]): string {
   for (const name of names) {
-    const value = process.env[name];
-    if (value && value.length > 0) return value;
+    const raw = process.env[name];
+    if (!raw) continue;
+    const value = raw.trim().replace(/^(["'])([\s\S]*)\1$/, "$2").trim();
+    if (value.length > 0) return value;
   }
   return "";
+}
+
+/** Which of the candidate names actually supplied a value. Used by diagnostics. */
+export function envSourceName(...names: string[]): string | null {
+  for (const name of names) {
+    const raw = process.env[name];
+    if (raw && raw.trim().length > 0) return name;
+  }
+  return null;
 }
 
 export const serverEnv = {

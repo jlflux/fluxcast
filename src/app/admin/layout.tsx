@@ -44,6 +44,12 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
               View site
             </Link>
             <Link
+              href="/admin/diagnostics"
+              className="text-ink-300 transition hover:text-ink-100"
+            >
+              Diagnostics
+            </Link>
+            <Link
               href="/admin/broadcasts/new"
               className="rounded-md bg-flux-400 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-950 transition hover:bg-flux-300"
             >
