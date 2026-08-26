@@ -35,6 +35,16 @@ export interface EnvCheck {
   secret: boolean;
 }
 
+export interface ConnResult {
+  ok: boolean;
+  /** Human-readable failure reason, with the underlying cause unwrapped. */
+  error: string | null;
+  /** PostgREST error code (e.g. 42P01 = table does not exist), when present. */
+  code: string | null;
+  /** PostgREST hint/details, when present. */
+  detail: string | null;
+}
+
 export interface TableCheck {
   table: string;
   count: number | null;
@@ -47,9 +57,13 @@ export interface Diagnostics {
   supabaseConfigured: boolean;
   livekitConfigured: boolean;
   env: EnvCheck[];
+  /** Raw HTTPS reachability of the Supabase REST endpoint. */
+  reachability: { ok: boolean; status: number | null; error: string | null } | null;
   /** Null when Supabase is not configured, so no connection was attempted. */
-  publicRead: { ok: boolean; error: string | null } | null;
-  serviceRead: { ok: boolean; error: string | null } | null;
+  publicRead: ConnResult | null;
+  serviceRead: ConnResult | null;
+  /** Problems spotted in the *shape* of a configured value. */
+  warnings: string[];
   tables: TableCheck[];
   deployment: { label: string; value: string }[];
 }
@@ -108,25 +122,26 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
     }),
   ];
 
-  let publicRead: Diagnostics["publicRead"] = null;
-  let serviceRead: Diagnostics["serviceRead"] = null;
+  let publicRead: ConnResult | null = null;
+  let serviceRead: ConnResult | null = null;
   const tables: TableCheck[] = [];
+  const reachability = await checkReachability();
 
   if (isSupabaseConfigured) {
     // Does the publishable key + RLS actually let a fan read data?
     try {
       const supabase = await createServerSupabaseClient();
       const { error } = await supabase.from("schools").select("id").limit(1);
-      publicRead = { ok: !error, error: error?.message ?? null };
+      publicRead = connResult(error);
     } catch (error) {
-      publicRead = { ok: false, error: describe(error) };
+      publicRead = connResult(error);
     }
 
     // Does the service role key work, and did the migration + seed run?
     try {
       const admin = createAdminSupabaseClient();
       const { error } = await admin.from("schools").select("id").limit(1);
-      serviceRead = { ok: !error, error: error?.message ?? null };
+      serviceRead = connResult(error);
 
       for (const table of SEEDED_TABLES) {
         const { count, error: countError } = await admin
@@ -139,7 +154,7 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
         });
       }
     } catch (error) {
-      serviceRead = { ok: false, error: describe(error) };
+      serviceRead = connResult(error);
     }
   }
 
@@ -149,15 +164,166 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
     supabaseConfigured: isSupabaseConfigured,
     livekitConfigured: isLiveKitConfigured,
     env,
+    reachability,
     publicRead,
     serviceRead,
+    warnings: configWarnings(),
     tables,
     deployment: deploymentInfo(),
   };
 }
 
+/**
+ * Unwrap an error into something actionable.
+ *
+ * Node's fetch reports every network failure as the useless "TypeError: fetch
+ * failed" and puts the real reason (ENOTFOUND, ECONNREFUSED, certificate
+ * problems) on `cause`. Walking the chain is the difference between a user
+ * seeing "fetch failed" and seeing "getaddrinfo ENOTFOUND".
+ */
 function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error === null || error === undefined) return "unknown error";
+  if (typeof error === "string") return error;
+  if (!(error instanceof Error)) {
+    const record = error as { message?: unknown };
+    return typeof record.message === "string" ? record.message : String(error);
+  }
+
+  const parts: string[] = [error.message];
+  let cause: unknown = (error as { cause?: unknown }).cause;
+
+  for (let depth = 0; cause && depth < 4; depth += 1) {
+    if (cause instanceof Error) {
+      const code = (cause as { code?: string }).code;
+      parts.push(code ? `${cause.message} (${code})` : cause.message);
+      cause = (cause as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(cause));
+      break;
+    }
+  }
+
+  return parts.join(" — ");
+}
+
+/**
+ * Strip stack frames and cap length.
+ *
+ * On a network failure supabase-js puts an entire JS stack trace in `details`,
+ * which buries the one useful line under noise nobody can act on.
+ */
+function tidyDetail(value: string | undefined): string | null {
+  if (!value) return null;
+  const meaningful = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("at ") && !line.startsWith("Caused by"))
+    .join(" · ");
+  if (!meaningful) return null;
+  return meaningful.length > 240 ? `${meaningful.slice(0, 240)}…` : meaningful;
+}
+
+/** Normalise a supabase-js error object into a ConnResult. */
+function connResult(error: unknown): ConnResult {
+  if (!error) return { ok: true, error: null, code: null, detail: null };
+  const record = error as { code?: string; details?: string; hint?: string };
+  const detail = [tidyDetail(record.details), tidyDetail(record.hint)]
+    .filter(Boolean)
+    .join(" · ");
+  return {
+    ok: false,
+    error: describe(error),
+    code: record.code ?? null,
+    detail: detail || null,
+  };
+}
+
+/**
+ * Sanity-check the *shape* of configured values.
+ *
+ * The most common Supabase setup mistake is pasting the dashboard URL rather
+ * than the API URL, which fails with a network error that says nothing about
+ * the real cause.
+ */
+function configWarnings(): string[] {
+  const warnings: string[] = [];
+  const url = serverEnv.supabaseUrl;
+
+  if (url) {
+    let host: string | null = null;
+    try {
+      const parsed = new URL(url);
+      host = parsed.host;
+      if (parsed.pathname !== "/" && parsed.pathname !== "") {
+        warnings.push(
+          `The Supabase URL has a path ("${parsed.pathname}"). It should be just the origin, e.g. https://your-project.supabase.co`,
+        );
+      }
+      if (parsed.protocol !== "https:") {
+        warnings.push(`The Supabase URL should start with https://, not ${parsed.protocol}`);
+      }
+    } catch {
+      warnings.push(`The Supabase URL is not a valid URL: "${url.slice(0, 40)}"`);
+    }
+
+    if (host === "supabase.com" || host === "www.supabase.com" || host === "app.supabase.com") {
+      warnings.push(
+        "That is the Supabase dashboard URL, not the API URL. Use Project Settings -> Data API -> Project URL, which looks like https://your-project.supabase.co",
+      );
+    } else if (host && !host.endsWith(".supabase.co") && !host.includes("localhost")) {
+      warnings.push(
+        `Unexpected Supabase host "${host}". The API URL normally ends in .supabase.co`,
+      );
+    }
+
+    if (url.startsWith("postgres")) {
+      warnings.push(
+        "That is the Postgres connection string, not the API URL. FluxCast talks to Supabase over HTTPS.",
+      );
+    }
+  }
+
+  const publishable = serverEnv.supabasePublishableKey;
+  if (publishable && !publishable.startsWith("sb_publishable_") && !publishable.startsWith("ey")) {
+    warnings.push(
+      "The publishable key does not look like a Supabase key (expected it to start with sb_publishable_ or ey).",
+    );
+  }
+  if (publishable.startsWith("sb_secret_")) {
+    warnings.push(
+      "The publishable key slot holds a SECRET key. Swap it for the publishable key.",
+    );
+  }
+
+  const service = serverEnv.supabaseServiceRoleKey;
+  if (service && service.startsWith("sb_publishable_")) {
+    warnings.push(
+      "The service role key slot holds the PUBLISHABLE key. Admin writes will fail until this is the secret key.",
+    );
+  }
+
+  return warnings;
+}
+
+/**
+ * Can we reach the Supabase REST endpoint at all?
+ *
+ * Separates "the network/URL is wrong" from "the credentials are wrong":
+ * a thrown error means DNS or TLS trouble, 401 means a bad key, 404 means the
+ * wrong project or path, and 200 means the endpoint is healthy.
+ */
+async function checkReachability(): Promise<Diagnostics["reachability"]> {
+  if (!serverEnv.supabaseUrl) return null;
+  try {
+    const response = await fetch(`${serverEnv.supabaseUrl.replace(/\/$/, "")}/rest/v1/`, {
+      headers: { apikey: serverEnv.supabasePublishableKey },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    return { ok: response.ok, status: response.status, error: null };
+  } catch (error) {
+    return { ok: false, status: null, error: describe(error) };
+  }
 }
 
 /**

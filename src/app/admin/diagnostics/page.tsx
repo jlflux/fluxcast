@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { requireAdmin } from "@/lib/auth";
 import { collectDiagnostics } from "@/lib/diagnostics";
-import type { EnvCheck } from "@/lib/diagnostics";
+import type { ConnResult, EnvCheck } from "@/lib/diagnostics";
 
 export const metadata = { title: "Diagnostics" };
 
@@ -31,6 +31,19 @@ export default async function DiagnosticsPage() {
         What this running server can actually see. Secret values are never shown — only
         whether they are present and how long they are.
       </p>
+
+      {d.warnings.length > 0 && (
+        <section className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-5">
+          <h2 className="text-base font-bold tracking-tight text-amber-100">
+            Likely configuration problems
+          </h2>
+          <ul className="mt-3 flex list-disc flex-col gap-2 pl-5 text-sm text-amber-100/90">
+            {d.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <Card title="Status">
         <dl className="grid gap-3 sm:grid-cols-2">
@@ -77,17 +90,56 @@ export default async function DiagnosticsPage() {
 
       {d.supabaseConfigured ? (
         <>
-          <Card title="Database connection">
-            <div className="flex flex-col gap-3">
-              <ConnResult
+          <Card
+            title="Database connection"
+            description="Reachability is plain HTTPS to the Supabase endpoint. If it fails, the URL or the network is the problem and the two reads below cannot succeed either."
+          >
+            <div className="flex flex-col gap-4">
+              {d.reachability && (
+                <div>
+                  <p className="text-sm font-semibold text-ink-200">
+                    <Mark ok={d.reachability.ok} /> Endpoint reachable
+                    {d.reachability.status !== null && (
+                      <span className="ml-2 font-mono text-xs text-ink-400">
+                        HTTP {d.reachability.status}
+                      </span>
+                    )}
+                  </p>
+                  {d.reachability.error && (
+                    <p className="mt-1 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 font-mono text-xs text-rose-100">
+                      {d.reachability.error}
+                    </p>
+                  )}
+                  {!d.reachability.ok && (
+                    <p className="mt-1 text-xs text-ink-400">
+                      {d.reachability.status === null
+                        ? "Could not reach the URL at all — DNS, TLS or network. Check the project URL, and that the Supabase project is not paused."
+                        : d.reachability.status === 401 || d.reachability.status === 403
+                          ? "Reached the host, but it rejected the request. Usually a wrong publishable key, or a URL that is not this project's API."
+                          : d.reachability.status === 404
+                            ? "Reached a server, but not a Supabase API. Check the project URL."
+                            : `Reached the host, but it answered HTTP ${d.reachability.status}.`}
+                    </p>
+                  )}
+                </div>
+              )}
+              <ConnLine
                 label="Public read (publishable key + RLS)"
                 result={d.publicRead}
-                hint="This is how fans read the schedule. A failure here usually means the migration's RLS policies did not run."
+                hint={
+                  d.reachability && !d.reachability.ok
+                    ? "Blocked by the reachability failure above — fix that first."
+                    : "This is how fans read the schedule. Failing here usually means the migration's RLS policies did not run."
+                }
               />
-              <ConnResult
+              <ConnLine
                 label="Service role read"
                 result={d.serviceRead}
-                hint="This is how the admin area writes. A failure here usually means the service role key is wrong."
+                hint={
+                  d.reachability && !d.reachability.ok
+                    ? "Blocked by the reachability failure above — fix that first."
+                    : "This is how the admin area writes. Failing here usually means the service role key is wrong."
+                }
               />
             </div>
           </Card>
@@ -170,13 +222,13 @@ function EnvList({ checks }: { checks: EnvCheck[] }) {
   );
 }
 
-function ConnResult({
+function ConnLine({
   label,
   result,
   hint,
 }: {
   label: string;
-  result: { ok: boolean; error: string | null } | null;
+  result: ConnResult | null;
   hint: string;
 }) {
   if (!result) return null;
@@ -184,13 +236,23 @@ function ConnResult({
     <div>
       <p className="text-sm font-semibold text-ink-200">
         <Mark ok={result.ok} /> {label}
+        {result.code && (
+          <span className="ml-2 font-mono text-xs text-ink-400">code {result.code}</span>
+        )}
       </p>
       {result.error && (
         <p className="mt-1 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 font-mono text-xs text-rose-100">
           {result.error}
+          {result.detail && <span className="block text-rose-200/70">{result.detail}</span>}
         </p>
       )}
-      {!result.ok && <p className="mt-1 text-xs text-ink-400">{hint}</p>}
+      {!result.ok && (
+        <p className="mt-1 text-xs text-ink-400">
+          {result.code === "42P01"
+            ? "That table does not exist — the migration has not run in this project."
+            : hint}
+        </p>
+      )}
     </div>
   );
 }

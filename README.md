@@ -236,9 +236,17 @@ Other causes it will identify for you:
 |---|---|
 | A variable `missing` | Not set, or set in a different Vercel environment (Production vs. Preview) than the one you're viewing |
 | `read from NEXT_PUBLIC_…  — fallback name` | Works, but rename it to the plain name |
-| Variables present, public read fails | RLS policies didn't run — re-run the migration |
-| Variables present, service read fails | Service role key is wrong |
+| **Endpoint reachable** fails, no HTTP status | Wrong project URL, or the Supabase project is paused. The unwrapped cause (e.g. `getaddrinfo ENOTFOUND`) is shown |
+| **Endpoint reachable** returns 401/403 | Reached the host but the key was rejected |
+| **Endpoint reachable** returns 404 | Reached a server, but not a Supabase API |
+| Endpoint OK, public read fails | RLS policies didn't run — re-run the migration |
+| Endpoint OK, service read fails | Service role key is wrong |
+| Either read shows code `42P01` | Table doesn't exist — the migration hasn't run *in this project* |
 | All tables `0 rows` | Migration ran, seed didn't — run `supabase/seed.sql` |
+
+A **Likely configuration problems** panel appears above everything when a value
+looks malformed — a dashboard URL pasted instead of the API URL, a Postgres
+connection string, or the publishable and secret keys swapped.
 
 ---
 
