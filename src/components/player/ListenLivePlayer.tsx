@@ -11,6 +11,8 @@ import {
 } from "livekit-client";
 
 import type { BroadcastStatus } from "@/lib/types";
+import { LevelMeter } from "@/components/player/LevelMeter";
+import { useMediaSession } from "@/components/player/useMediaSession";
 
 /**
  * The fan-facing audio player.
@@ -62,21 +64,33 @@ const MESSAGES: Record<PlayerState, string> = {
 export function ListenLivePlayer({
   slug,
   initialStatus,
+  matchup,
+  competition,
+  schoolName,
 }: {
   slug: string;
   initialStatus: BroadcastStatus;
+  /** Shown on the phone's lock screen. */
+  matchup: string;
+  competition: string;
+  schoolName: string;
 }) {
   const [state, setState] = useState<PlayerState>("idle");
   const [volume, setVolume] = useState(1);
   /** Set when the server is running without LiveKit credentials. */
   const [devNotice, setDevNotice] = useState(false);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const teardown = useCallback(() => {
     roomRef.current?.disconnect();
     roomRef.current = null;
+    setAnalyser(null);
+    void audioContextRef.current?.close().catch(() => undefined);
+    audioContextRef.current = null;
   }, []);
 
   useEffect(() => teardown, [teardown]);
@@ -124,6 +138,35 @@ export function ListenLivePlayer({
       return;
     }
 
+    /**
+     * Tap the incoming audio for the level meter.
+     *
+     * The analyser is deliberately NOT connected to the audio destination —
+     * the <audio> element is already playing the track, and connecting both
+     * would play it twice. This is a read-only tap.
+     *
+     * Wrapped in try/catch because a browser that refuses to build a
+     * MediaStream source should cost us a meter, never the audio.
+     */
+    const attachAnalyser = (track: RemoteTrack) => {
+      try {
+        const mediaStreamTrack = track.mediaStreamTrack;
+        if (!mediaStreamTrack) return;
+        const context = new AudioContext();
+        audioContextRef.current = context;
+        void context.resume().catch(() => undefined);
+
+        const source = context.createMediaStreamSource(new MediaStream([mediaStreamTrack]));
+        const node = context.createAnalyser();
+        node.fftSize = 512;
+        node.smoothingTimeConstant = 0.7;
+        source.connect(node);
+        setAnalyser(node);
+      } catch (error) {
+        console.warn("[fluxcast] level meter unavailable", error);
+      }
+    };
+
     const room = new Room({ adaptiveStream: false, dynacast: false });
     roomRef.current = room;
 
@@ -150,6 +193,7 @@ export function ListenLivePlayer({
         void element.play().catch((error) => {
           console.warn("[fluxcast] audio playback was blocked", error);
         });
+        attachAnalyser(track);
         setState("playing");
       })
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
@@ -186,6 +230,14 @@ export function ListenLivePlayer({
     teardown();
     setState("idle");
   }, [teardown]);
+
+  // Put the broadcast on the phone's lock screen and notification shade.
+  useMediaSession({
+    info: { title: matchup, artist: competition, album: `${schoolName} on FluxCast` },
+    playing: state === "playing",
+    onPlay: connect,
+    onStop: stop,
+  });
 
   const isConnecting = state === "connecting" || state === "reconnecting";
   const isConnected = state === "playing" || state === "buffering" || isConnecting;
@@ -231,6 +283,10 @@ export function ListenLivePlayer({
             <span className="font-bold uppercase tracking-wide">Development mode</span> — no
             LiveKit credentials are configured, so there is no audio to play.
           </p>
+        )}
+
+        {(state === "playing" || state === "buffering") && (
+          <LevelMeter analyser={analyser} active={state === "playing"} />
         )}
 
         {state === "playing" && (

@@ -67,7 +67,14 @@ export default async function BroadcastPage({ params }: PageProps<"/broadcasts/[
         </div>
       </header>
 
-      <BroadcastState status={status} slug={slug} scheduledStart={broadcast.scheduledStart} />
+      <BroadcastState
+        status={status}
+        slug={slug}
+        scheduledStart={broadcast.scheduledStart}
+        matchup={broadcast.matchup}
+        competition={broadcast.competition}
+        schoolName={`${broadcast.school.shortName} ${broadcast.school.mascot ?? ""}`.trim()}
+      />
     </div>
   );
 }
@@ -76,13 +83,27 @@ function BroadcastState({
   status,
   slug,
   scheduledStart,
+  matchup,
+  competition,
+  schoolName,
 }: {
   status: import("@/lib/types").BroadcastStatus;
   slug: string;
   scheduledStart: string;
+  matchup: string;
+  competition: string;
+  schoolName: string;
 }) {
   if (status === "live") {
-    return <ListenLivePlayer slug={slug} initialStatus={status} />;
+    return (
+      <ListenLivePlayer
+        slug={slug}
+        initialStatus={status}
+        matchup={matchup}
+        competition={competition}
+        schoolName={schoolName}
+      />
+    );
   }
 
   if (status === "ended") {

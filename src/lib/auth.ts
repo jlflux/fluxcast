@@ -1,41 +1,117 @@
 import "server-only";
 
+import { redirect } from "next/navigation";
+
 import { isSupabaseConfigured } from "@/lib/env.server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import type { AdminProfile, AdminRole } from "@/lib/types";
+import { ADMIN_ROLES } from "@/lib/types";
 
 /**
  * Admin authorization — the single choke point.
  *
- * Every admin page and every admin server action calls `requireAdmin()`. Today
- * it always allows: FluxCast has no login screen yet, and the admin area is
- * open. That is a deliberate, visible state — `adminIsUnprotected` drives a
- * banner across the whole admin area saying so.
+ * Every admin page and every admin server action calls `requireAdmin()`.
+ * Server Actions are reachable by direct POST, not only through the UI, which
+ * is why the check belongs in the action rather than in the page that renders
+ * the form.
  *
- * When Supabase auth lands, the implementation goes *here* and nothing else has
- * to change:
- *
- *   const supabase = await createServerSupabaseClient();
- *   const { data: { user } } = await supabase.auth.getUser();
- *   if (!user) redirect("/admin/login");
- *   return { userId: user.id, email: user.email };
- *
- * Server Actions are reachable by direct POST, not just through the UI, which
- * is exactly why the check belongs in the action rather than in the page that
- * renders the form.
+ * When Supabase is not configured there is no user database to check against,
+ * so the admin area runs unauthenticated as a clearly-labelled development
+ * mode (`DEV_PROFILE` below, and a banner across the admin area). With
+ * Supabase configured, a real session is required.
  */
 
+/** Stand-in identity used only when Supabase is not configured. */
+const DEV_PROFILE: AdminProfile = {
+  id: "development-admin",
+  email: "development@localhost",
+  fullName: "Development Admin",
+  role: "super_admin",
+  schoolId: null,
+  createdAt: new Date(0).toISOString(),
+};
+
 export interface AdminSession {
-  /** Null while the admin area is unauthenticated. */
-  userId: string | null;
-  email: string | null;
-  protectedByAuth: boolean;
+  profile: AdminProfile;
+  /** False when running unauthenticated because Supabase is not configured. */
+  authenticated: boolean;
 }
 
-export const adminIsUnprotected = true;
+function toRole(value: string): AdminRole {
+  return (ADMIN_ROLES as readonly string[]).includes(value)
+    ? (value as AdminRole)
+    : "school_admin";
+}
 
-export async function requireAdmin(): Promise<AdminSession> {
+/**
+ * The signed-in admin, or null.
+ *
+ * Uses `getUser()` rather than `getSession()`: getUser revalidates the token
+ * with Supabase, whereas getSession trusts whatever is in the cookie. For an
+ * authorization decision only the verified answer will do.
+ */
+export async function getAdminSession(): Promise<AdminSession | null> {
+  if (!isSupabaseConfigured) {
+    return { profile: DEV_PROFILE, authenticated: false };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Read the profile with the service role: a signed-in user must be able to
+  // load their own role even before any policy lets them read the table.
+  const admin = createAdminSupabaseClient();
+  const { data, error } = await admin
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error(`[fluxcast] Could not load profile for ${user.id}: ${error.message}`);
+    return null;
+  }
+  if (!data) {
+    // Authenticated but not provisioned. Treated as not an admin.
+    console.warn(`[fluxcast] No profile row for authenticated user ${user.id}`);
+    return null;
+  }
+
   return {
-    userId: null,
-    email: null,
-    protectedByAuth: isSupabaseConfigured && !adminIsUnprotected,
+    profile: {
+      id: data.id,
+      email: data.email,
+      fullName: data.full_name,
+      role: toRole(data.role),
+      schoolId: data.school_id,
+      createdAt: data.created_at,
+    },
+    authenticated: true,
   };
+}
+
+/** Redirects to the login page when there is no admin session. */
+export async function requireAdmin(): Promise<AdminSession> {
+  const session = await getAdminSession();
+  if (!session) redirect("/admin/login");
+  return session;
+}
+
+/** Redirects unless the signed-in admin is FluxCast staff. */
+export async function requireSuperAdmin(): Promise<AdminSession> {
+  const session = await requireAdmin();
+  if (session.profile.role !== "super_admin") redirect("/admin?denied=super_admin");
+  return session;
+}
+
+/** True when the admin area is reachable without signing in. */
+export const adminIsUnprotected = !isSupabaseConfigured;
+
+/** Can this admin act on the given school? */
+export function canManageSchool(session: AdminSession, schoolId: string): boolean {
+  return session.profile.role === "super_admin" || session.profile.schoolId === schoolId;
 }

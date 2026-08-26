@@ -69,6 +69,23 @@ export type BroadcastRow = {
   created_at: string;
 }
 
+export type ProfileRow = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+  school_id: string | null;
+  created_at: string;
+};
+
+export type ProfileInsert = {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  role?: string;
+  school_id?: string | null;
+};
+
 export type BroadcastInsert = {
   event_id: string;
   title: string;
@@ -97,6 +114,7 @@ export interface Database {
       teams: Table<TeamRow, Omit<TeamRow, "id" | "created_at">>;
       events: Table<EventRow, Omit<EventRow, "id" | "created_at">>;
       broadcasts: Table<BroadcastRow, BroadcastInsert>;
+      profiles: Table<ProfileRow, ProfileInsert>;
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

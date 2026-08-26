@@ -3,14 +3,14 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { requireAdmin } from "@/lib/auth";
+import { canManageSchool, requireAdmin, requireSuperAdmin } from "@/lib/auth";
 import { getDataSource } from "@/lib/data";
 import { wallTimeToIso } from "@/lib/format";
-import { buildRoomName } from "@/lib/slug";
+import { buildMatchup, buildRoomName } from "@/lib/slug";
 import { createBroadcastIngress } from "@/lib/livekit/service";
 import { streamingMode } from "@/lib/env.server";
 import type { BroadcastStatus } from "@/lib/types";
-import type { CreateBroadcastState } from "@/actions/form-state";
+import type { CreateBroadcastState, FormResultState } from "@/actions/form-state";
 
 function text(formData: FormData, name: string): string {
   const value = formData.get(name);
@@ -28,7 +28,7 @@ export async function createBroadcastAction(
   _previous: CreateBroadcastState,
   formData: FormData,
 ): Promise<CreateBroadcastState> {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   const teamId = text(formData, "teamId");
   const opponentName = text(formData, "opponentName");
@@ -51,6 +51,16 @@ export async function createBroadcastAction(
 
   if (Object.keys(fieldErrors).length > 0 || !startTime) {
     return { error: "Please fix the highlighted fields.", fieldErrors };
+  }
+
+  // A school admin may only create broadcasts for their own school's teams.
+  const teams = await getDataSource().listTeamOptions();
+  const team = teams.find((t) => t.id === teamId);
+  if (!team) {
+    return { error: "That team no longer exists.", fieldErrors: {} };
+  }
+  if (!canManageSchool(session, team.schoolId)) {
+    return { error: "You do not have access to that school.", fieldErrors: {} };
   }
 
   let broadcastId: string;
@@ -89,7 +99,7 @@ export async function createBroadcastAction(
  * fetched back from LiveKit whenever an admin views it.
  */
 export async function generateStreamDestinationAction(formData: FormData): Promise<void> {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   const broadcastId = text(formData, "broadcastId");
   if (!broadcastId) return;
@@ -97,6 +107,7 @@ export async function generateStreamDestinationAction(formData: FormData): Promi
   const data = getDataSource();
   const broadcast = await data.getBroadcastById(broadcastId);
   if (!broadcast) return;
+  if (!canManageSchool(session, broadcast.school.id)) return;
 
   // Already has a destination — don't orphan an ingress by making a second one.
   if (broadcast.livekitIngressId) return;
@@ -133,13 +144,16 @@ export async function generateStreamDestinationAction(formData: FormData): Promi
  * and nothing else.
  */
 export async function simulateStatusAction(formData: FormData): Promise<void> {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   if (streamingMode !== "mock") return;
 
   const broadcastId = text(formData, "broadcastId");
   const status = text(formData, "status") as BroadcastStatus;
   if (!broadcastId || !status) return;
+
+  const existing = await getDataSource().getBroadcastById(broadcastId);
+  if (!existing || !canManageSchool(session, existing.school.id)) return;
 
   const now = new Date().toISOString();
   await getDataSource().updateBroadcast(broadcastId, {
@@ -151,4 +165,166 @@ export async function simulateStatusAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/broadcasts/${broadcastId}`);
   revalidatePath("/admin");
   revalidatePath("/");
+}
+
+
+/**
+ * Correct the details of an existing broadcast.
+ *
+ * The slug — the public URL — is deliberately not regenerated. A school may
+ * already have shared the link, and fixing a typo should not break it.
+ */
+export async function updateBroadcastAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  const session = await requireAdmin();
+
+  const broadcastId = text(formData, "broadcastId");
+  const opponentName = text(formData, "opponentName");
+  const date = text(formData, "date");
+  const time = text(formData, "time");
+  const isHome = text(formData, "homeAway") !== "away";
+  const location = text(formData, "location");
+  const title = text(formData, "title");
+
+  const data = getDataSource();
+  const existing = broadcastId ? await data.getBroadcastById(broadcastId) : null;
+  if (!existing) {
+    return { error: "That broadcast no longer exists.", fieldErrors: {}, success: null };
+  }
+  if (!canManageSchool(session, existing.school.id)) {
+    return { error: "You do not have access to that school.", fieldErrors: {}, success: null };
+  }
+
+  const fieldErrors: Record<string, string> = {};
+  if (!opponentName) fieldErrors.opponentName = "Enter the opponent.";
+  if (!date) fieldErrors.date = "Choose a date.";
+  if (!time) fieldErrors.time = "Choose a start time.";
+
+  const startTime = date && time ? wallTimeToIso(date, time) : null;
+  if (date && time && !startTime) {
+    fieldErrors.date = "That date and time could not be read.";
+  }
+
+  if (Object.keys(fieldErrors).length > 0 || !startTime) {
+    return { error: "Please fix the highlighted fields.", fieldErrors, success: null };
+  }
+
+  try {
+    await data.updateBroadcastDetails(existing.id, {
+      opponentName,
+      startTime,
+      isHome,
+      location: location || null,
+      title:
+        title.trim() ||
+        buildMatchup(existing.school.shortName, opponentName, isHome),
+    });
+  } catch (error) {
+    console.error("[fluxcast] updateBroadcastDetails failed", error);
+    return {
+      error: error instanceof Error ? error.message : "Could not save those changes.",
+      fieldErrors: {},
+      success: null,
+    };
+  }
+
+  revalidatePath(`/admin/broadcasts/${existing.id}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/broadcasts/${existing.slug}`);
+
+  return { error: null, fieldErrors: {}, success: "Changes saved." };
+}
+
+/** Create a team. School admins may only add teams to their own school. */
+export async function createTeamAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  const session = await requireAdmin();
+
+  const schoolId = text(formData, "schoolId");
+  const sportId = text(formData, "sportId");
+  const level = text(formData, "level") || "Varsity";
+  const gender = text(formData, "gender");
+
+  if (!schoolId || !sportId) {
+    return {
+      error: "Choose a school and a sport.",
+      fieldErrors: {
+        ...(schoolId ? {} : { schoolId: "Choose a school." }),
+        ...(sportId ? {} : { sportId: "Choose a sport." }),
+      },
+      success: null,
+    };
+  }
+
+  if (!canManageSchool(session, schoolId)) {
+    return { error: "You do not have access to that school.", fieldErrors: {}, success: null };
+  }
+
+  try {
+    const team = await getDataSource().createTeam({
+      schoolId,
+      sportId,
+      level,
+      gender: gender || null,
+    });
+    revalidatePath("/admin/teams");
+    revalidatePath("/admin/broadcasts/new");
+    return { error: null, fieldErrors: {}, success: `Created ${team.label}.` };
+  } catch (error) {
+    console.error("[fluxcast] createTeam failed", error);
+    return {
+      error: error instanceof Error ? error.message : "Could not create that team.",
+      fieldErrors: {},
+      success: null,
+    };
+  }
+}
+
+/** Create a school. FluxCast staff only. */
+export async function createSchoolAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  await requireSuperAdmin();
+
+  const name = text(formData, "name");
+  const shortName = text(formData, "shortName") || name;
+  if (!name) {
+    return {
+      error: "Enter the school name.",
+      fieldErrors: { name: "Enter the school name." },
+      success: null,
+    };
+  }
+
+  try {
+    const school = await getDataSource().createSchool({
+      name,
+      shortName,
+      mascot: text(formData, "mascot") || null,
+      city: text(formData, "city") || null,
+      state: text(formData, "state") || null,
+      primaryColor: text(formData, "primaryColor") || null,
+    });
+    revalidatePath("/admin/schools");
+    revalidatePath("/admin/teams");
+    revalidatePath("/");
+    return {
+      error: null,
+      fieldErrors: {},
+      success: `Created ${school.name}. Its page is at /schools/${school.slug}.`,
+    };
+  } catch (error) {
+    console.error("[fluxcast] createSchool failed", error);
+    return {
+      error: error instanceof Error ? error.message : "Could not create that school.",
+      fieldErrors: {},
+      success: null,
+    };
+  }
 }

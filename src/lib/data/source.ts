@@ -2,8 +2,11 @@ import type {
   BroadcastStatus,
   BroadcastView,
   CreateBroadcastInput,
+  CreateSchoolInput,
+  CreateTeamInput,
   School,
   Sport,
+  UpdateBroadcastInput,
 } from "@/lib/types";
 
 /** A team, flattened for the admin form's dropdown. */
@@ -52,4 +55,13 @@ export interface DataSource {
 
   createBroadcast(input: CreateBroadcastInput): Promise<BroadcastView>;
   updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null>;
+
+  /** Correct the details of an existing broadcast and its event. */
+  updateBroadcastDetails(
+    id: string,
+    input: UpdateBroadcastInput,
+  ): Promise<BroadcastView | null>;
+
+  createSchool(input: CreateSchoolInput): Promise<School>;
+  createTeam(input: CreateTeamInput): Promise<TeamOption>;
 }

@@ -8,9 +8,13 @@ import { BroadcastForm } from "@/components/admin/BroadcastForm";
 export const metadata = { title: "Create broadcast" };
 
 export default async function NewBroadcastPage() {
-  await requireAdmin();
+  const session = await requireAdmin();
 
-  const teams = await getDataSource().listTeamOptions();
+  const allTeams = await getDataSource().listTeamOptions();
+  const teams =
+    session.profile.role === "super_admin"
+      ? allTeams
+      : allTeams.filter((t) => t.schoolId === session.profile.schoolId);
   const { date } = isoToWallTime(new Date().toISOString());
 
   return (
@@ -29,8 +33,11 @@ export default async function NewBroadcastPage() {
 
       {teams.length === 0 ? (
         <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          No teams found. Run the database seed (<code>supabase/seed.sql</code>) before
-          creating a broadcast.
+          No teams available to you. Add one on the{" "}
+          <Link href="/admin/teams" className="underline">
+            Teams
+          </Link>{" "}
+          page, or ask a FluxCast super admin to link your account to a school.
         </p>
       ) : (
         <BroadcastForm teams={teams} defaultDate={date} />

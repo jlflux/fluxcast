@@ -145,3 +145,48 @@ export interface CreateBroadcastInput {
   /** Optional override. When blank, FluxCast derives it from the matchup. */
   title: string | null;
 }
+
+/**
+ * Admin roles.
+ *
+ * super_admin  - FluxCast staff. Every school, every broadcast, and can create
+ *                schools, teams and other admin accounts.
+ * school_admin - A partner school's broadcaster. Their own school only.
+ */
+export const ADMIN_ROLES = ["super_admin", "school_admin"] as const;
+export type AdminRole = (typeof ADMIN_ROLES)[number];
+
+export interface AdminProfile {
+  id: string;
+  email: string;
+  fullName: string | null;
+  role: AdminRole;
+  /** Home school. Required for school_admin; optional context for super_admin. */
+  schoolId: string | null;
+  createdAt: string;
+}
+
+/** Fields an admin may correct on an existing broadcast. */
+export interface UpdateBroadcastInput {
+  opponentName: string;
+  startTime: string;
+  isHome: boolean;
+  location: string | null;
+  title: string;
+}
+
+export interface CreateSchoolInput {
+  name: string;
+  shortName: string;
+  mascot: string | null;
+  city: string | null;
+  state: string | null;
+  primaryColor: string | null;
+}
+
+export interface CreateTeamInput {
+  schoolId: string;
+  sportId: string;
+  level: string;
+  gender: string | null;
+}

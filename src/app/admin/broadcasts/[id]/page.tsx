@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import { requireAdmin } from "@/lib/auth";
+import { canManageSchool, requireAdmin } from "@/lib/auth";
 import { getDataSource } from "@/lib/data";
 import { syncBroadcastStatus } from "@/lib/livekit/sync";
 import { getStreamCredentials } from "@/lib/livekit/service";
@@ -19,11 +19,12 @@ import {
 export default async function AdminBroadcastPage({
   params,
 }: PageProps<"/admin/broadcasts/[id]">) {
-  await requireAdmin();
+  const session = await requireAdmin();
   const { id } = await params;
 
   const broadcast = await getDataSource().getBroadcastById(id);
   if (!broadcast) notFound();
+  if (!canManageSchool(session, broadcast.school.id)) redirect("/admin?denied=school");
 
   const status = await syncBroadcastStatus(broadcast);
 
@@ -57,12 +58,20 @@ export default async function AdminBroadcastPage({
           {broadcast.location ? ` · ${broadcast.location}` : ""}
         </p>
         <p className="mt-3 text-sm text-ink-300">{STATUS_HINT[status]}</p>
-        <Link
-          href={`/broadcasts/${broadcast.slug}`}
-          className="mt-3 inline-block text-sm font-semibold text-flux-400 transition hover:text-flux-300"
-        >
-          View public page →
-        </Link>
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          <Link
+            href={`/admin/broadcasts/${broadcast.id}/edit`}
+            className="rounded-md border border-ink-700 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-200 transition hover:border-ink-600 hover:bg-ink-800"
+          >
+            Edit details
+          </Link>
+          <Link
+            href={`/broadcasts/${broadcast.slug}`}
+            className="text-sm font-semibold text-flux-400 transition hover:text-flux-300"
+          >
+            View public page →
+          </Link>
+        </div>
       </header>
 
       {credentials ? (

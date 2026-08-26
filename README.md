@@ -126,11 +126,80 @@ Milestone 2: persist real events and broadcasts.
 5. Run the migration and seed (next section).
 6. Restart `npm run dev`. The amber banner should stop mentioning Supabase.
 
-**Authentication is not wired up yet.** `/admin` currently has no sign-in and
-shows a red UNPROTECTED banner. The single place to add it is
-`requireAdmin()` in `src/lib/auth.ts`, which every admin page and every admin
-server action already calls. Do not deploy the admin area publicly until that
-is implemented.
+### Creating your admin account
+
+Migration `0002_auth_and_roles.sql` adds accounts and roles. Run it in the SQL
+editor, then:
+
+1. **Authentication → Users → Add user → Create new user.**
+2. Enter your email and a password. Tick **Auto Confirm User** — without it
+   Supabase waits for an email confirmation you have not configured yet.
+3. Creating the user fires a trigger that adds a matching row in `profiles`,
+   defaulting to the least-privileged role (`school_admin`, no school).
+4. Promote yourself to FluxCast staff and attach Homewood:
+
+   ```sql
+   update public.profiles
+   set role = 'super_admin',
+       school_id = (select id from public.schools where slug = 'homewood')
+   where email = 'you@example.com';
+   ```
+
+5. Sign in at `/admin/login`. The UNPROTECTED banner disappears once Supabase is
+   configured, because the admin area now requires a session.
+
+Use a password manager and a password you have not used elsewhere. If a
+password has ever been pasted into a chat, an email or a ticket, treat it as
+public and change it.
+
+### Roles
+
+| Role | Can |
+|---|---|
+| `super_admin` | Everything, every school. Create schools, teams, broadcasts. This is FluxCast staff |
+| `school_admin` | Their own school only: its teams, its broadcasts. Cannot see or touch another school's |
+
+A `super_admin` may also have a `school_id`. That is only a convenience — it
+preselects their school on forms and never limits what they can reach.
+
+Authorization is enforced twice, on purpose:
+
+- **In the app.** `requireAdmin()` and `requireSuperAdmin()` in
+  `src/lib/auth.ts` guard every admin page, and every server action re-checks
+  with `canManageSchool()`. Server Actions are reachable by direct POST, not
+  only through the UI, so the check belongs in the action and not the page.
+- **In the database.** RLS policies scope writes by role, so a bug in app code
+  cannot let one school's admin write another school's data.
+
+The second layer is tested: as a school admin, attempts to update, delete or
+hijack another school's broadcast all affect zero rows, and creating a school
+is rejected outright.
+
+### Onboarding another school
+
+A school does not sign itself up — a super admin onboards it. That keeps
+anyone from creating schools on your network.
+
+1. **Admin → Schools → Add a school.** Name, short name, mascot, city, state.
+2. **Admin → Teams → Add a team.** Pick the new school, the sport and the level
+   (e.g. Varsity Football). Broadcasts hang off teams, so a school needs at
+   least one.
+3. **Create their account.** Supabase → Authentication → Users → Add user, with
+   Auto Confirm ticked. Then link it to their school:
+
+   ```sql
+   update public.profiles
+   set role = 'school_admin',
+       school_id = (select id from public.schools where slug = 'their-school-slug')
+   where email = 'their-broadcaster@school.org';
+   ```
+
+4. Send them the login URL. They will see only their own school: their teams,
+   their broadcasts, their stream keys. They create a broadcast, generate a
+   stream destination, and point OBS at it exactly as you do.
+
+Their games appear on the FluxCast homepage alongside Homewood's automatically —
+the public site lists every school's live and upcoming broadcasts.
 
 ---
 
@@ -262,6 +331,8 @@ connection string, or the publishable and secret keys swapped.
 SQL lives in `supabase/`:
 
 - `migrations/0001_init.sql` — tables, constraints, indexes, RLS policies
+- `migrations/0002_auth_and_roles.sql` — admin accounts, roles, and the RLS
+  policies that scope each school's admin to their own data
 - `seed.sql` — Homewood High School, Football, Varsity Football, and four
   sample games
 
@@ -270,7 +341,8 @@ is enough:
 
 1. Open your project → **SQL Editor** → **New query**.
 2. Paste `supabase/migrations/0001_init.sql`, run it.
-3. Paste `supabase/seed.sql`, run it.
+3. Paste `supabase/migrations/0002_auth_and_roles.sql`, run it.
+4. Paste `supabase/seed.sql`, run it.
 
 Both are safe to re-run. Re-running `seed.sql` also **repairs** the four sample
 games' kickoff times, locations and statuses, so it is the fix if the sample
@@ -461,6 +533,26 @@ seconds while something is scheduled today, every 60 otherwise.
 Webhooks become worth it when FluxCast needs sub-second state changes or is
 running many concurrent broadcasts. One school does not.
 
+### The listener player
+
+Two things beyond plain playback, both progressive — where a browser does not
+support them, the player still works:
+
+**Lock-screen controls.** The player publishes to the Media Session API, so a
+broadcast appears on a phone's lock screen and in the notification shade with
+play/pause, the way a music app does. A fan can pocket their phone and still
+control the game. Support is best on Android Chrome; iOS Safari is less
+predictable with live streams. Seek and track-skip handlers are explicitly
+cleared — a live broadcast has no timeline, and offering a scrubber that cannot
+work is worse than offering none.
+
+**Level meter.** A bar-graph meter driven by a Web Audio `AnalyserNode` reading
+the actual incoming audio, not an animation. Its job is reassurance: a fan
+hearing nothing can tell within a second whether the broadcast is silent or
+their phone is muted. The analyser is a read-only tap — it is deliberately not
+connected to the audio destination, since the `<audio>` element is already
+playing the track and connecting both would play it twice.
+
 ### Listener security
 
 Fans never sign in, so the `/api/broadcasts/[slug]/listen` route is public. What
@@ -509,6 +601,10 @@ src/
       page.tsx               Dashboard: live / today / upcoming
       broadcasts/new/        Create broadcast form
       broadcasts/[id]/       Manage a broadcast, stream credentials
+      broadcasts/[id]/edit/  Correct an existing broadcast
+      teams/                 Add teams to a school
+      schools/               Onboard a school (super admin only)
+      login/                 Sign in
       diagnostics/           Configuration self-check
     api/broadcasts/[slug]/
       listen/route.ts        Mints listen-only LiveKit tokens
@@ -517,7 +613,7 @@ src/
   components/
     ui/                    Wordmark, LiveBadge, StatusPill, CopyButton, SecretField
     public/                Header, footer, game cards, school crest
-    player/                LiveKit audio player + status watcher (client)
+    player/                LiveKit audio player, level meter, media session (client)
     admin/                 Dashboard table, create form, stream destination
   lib/
     data/                  DataSource interface + mock and Supabase impls

@@ -4,12 +4,15 @@ import type {
   BroadcastStatus,
   BroadcastView,
   CreateBroadcastInput,
+  CreateSchoolInput,
+  CreateTeamInput,
   EventStatus,
   School,
   Sport,
+  UpdateBroadcastInput,
 } from "@/lib/types";
 import { BROADCAST_STATUSES, EVENT_STATUSES } from "@/lib/types";
-import { buildBroadcastSlug, buildMatchup } from "@/lib/slug";
+import { buildBroadcastSlug, buildMatchup, slugify } from "@/lib/slug";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import type { BroadcastPatch, DataSource, TeamOption } from "@/lib/data/source";
@@ -33,6 +36,14 @@ type JoinedBroadcastRow = BroadcastRow & {
         team: (TeamRow & { school: SchoolRow | null }) | null;
       })
     | null;
+};
+
+/** Shape of a team row joined with its school and sport. */
+type TeamRowWithRelations = {
+  id: string;
+  level: string;
+  school: { id: string; name: string; short_name: string } | null;
+  sport: { id: string; name: string } | null;
 };
 
 const BROADCAST_SELECT = `
@@ -169,14 +180,7 @@ export class SupabaseDataSource implements DataSource {
       .select(
         "id, level, school:schools!inner ( id, name, short_name ), sport:sports!inner ( id, name )",
       )
-      .returns<
-        {
-          id: string;
-          level: string;
-          school: { id: string; name: string; short_name: string } | null;
-          sport: { id: string; name: string } | null;
-        }[]
-      >();
+      .returns<TeamRowWithRelations[]>();
     if (error) {
       logQueryError("listTeamOptions", error);
       return [];
@@ -312,6 +316,126 @@ export class SupabaseDataSource implements DataSource {
       if (!data) return candidate;
     }
     return `${base}-${Date.now()}`;
+  }
+
+  /**
+   * Correct an existing broadcast.
+   *
+   * The slug is deliberately left alone: it is the public URL, and someone may
+   * already have shared it. Fixing a typo in the opponent name should not break
+   * a link a school posted to its parents.
+   */
+  async updateBroadcastDetails(
+    id: string,
+    input: UpdateBroadcastInput,
+  ): Promise<BroadcastView | null> {
+    const admin = createAdminSupabaseClient();
+
+    const { data: broadcast, error: loadError } = await admin
+      .from("broadcasts")
+      .select("id, event_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (loadError) throw new Error(`Could not load the broadcast: ${loadError.message}`);
+    if (!broadcast) return null;
+
+    const { error: eventError } = await admin
+      .from("events")
+      .update({
+        opponent_name: input.opponentName,
+        start_time: input.startTime,
+        is_home: input.isHome,
+        location: input.location,
+      })
+      .eq("id", broadcast.event_id);
+    if (eventError) throw new Error(`Could not save the game: ${eventError.message}`);
+
+    const { error: broadcastError } = await admin
+      .from("broadcasts")
+      .update({ title: input.title, scheduled_start: input.startTime })
+      .eq("id", id);
+    if (broadcastError) {
+      throw new Error(`Could not save the broadcast: ${broadcastError.message}`);
+    }
+
+    return this.getBroadcastById(id);
+  }
+
+  async createSchool(input: CreateSchoolInput): Promise<School> {
+    const admin = createAdminSupabaseClient();
+    const slug = slugify(input.name);
+
+    const { data: existing } = await admin
+      .from("schools")
+      .select("id")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (existing) {
+      throw new Error(`A school with the address "${slug}" already exists.`);
+    }
+
+    const { data, error } = await admin
+      .from("schools")
+      .insert({
+        name: input.name,
+        slug,
+        short_name: input.shortName,
+        mascot: input.mascot,
+        city: input.city,
+        state: input.state,
+        logo_url: null,
+        primary_color: input.primaryColor,
+        secondary_color: null,
+        active: true,
+      })
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new Error(`Could not create the school: ${error?.message ?? "unknown error"}`);
+    }
+    return toSchool(data);
+  }
+
+  async createTeam(input: CreateTeamInput): Promise<TeamOption> {
+    const admin = createAdminSupabaseClient();
+
+    const { data, error } = await admin
+      .from("teams")
+      .insert({
+        school_id: input.schoolId,
+        sport_id: input.sportId,
+        level: input.level,
+        gender: input.gender,
+      })
+      .select("id, level, school:schools!inner ( id, name, short_name ), sport:sports!inner ( id, name )")
+      .single()
+      .returns<TeamRowWithRelations>();
+
+    if (error) {
+      // 23505 is a unique violation: this exact team already exists.
+      if (error.code === "23505") {
+        throw new Error("That school already has a team at this level in this sport.");
+      }
+      throw new Error(`Could not create the team: ${error.message}`);
+    }
+    // supabase-js resolves `data` to `never` on this insert-select union. An
+    // annotation would not help — TypeScript narrows a variable to the type of
+    // the value assigned to it, so `never` would win. A cast is the escape.
+    const row = data as TeamRowWithRelations | null;
+    if (!row?.school || !row.sport) {
+      throw new Error("The team was created but could not be read back.");
+    }
+
+    return {
+      id: row.id,
+      schoolId: row.school.id,
+      schoolName: row.school.name,
+      schoolShortName: row.school.short_name,
+      sportId: row.sport.id,
+      sportName: row.sport.name,
+      level: row.level,
+      label: `${row.school.short_name} ${row.level} ${row.sport.name}`,
+    };
   }
 
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {

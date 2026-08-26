@@ -1,11 +1,11 @@
 import Link from "next/link";
 
 import { dataMode, streamingMode } from "@/lib/env.server";
-import { adminIsUnprotected } from "@/lib/auth";
+import { adminIsUnprotected, getAdminSession } from "@/lib/auth";
 import { Wordmark } from "@/components/ui/Wordmark";
 import { DevModeNotice } from "@/components/ui/DevModeNotice";
+import { SignOutButton } from "@/components/admin/SignOutButton";
 
-/** Admin always reflects current state; never prerender it. */
 export const dynamic = "force-dynamic";
 
 export const metadata = {
@@ -13,7 +13,10 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function AdminLayout({ children }: LayoutProps<"/admin">) {
+export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
+  const session = await getAdminSession();
+  const isSuper = session?.profile.role === "super_admin";
+
   return (
     <>
       <DevModeNotice dataMode={dataMode} streamingMode={streamingMode} />
@@ -21,9 +24,8 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
       {adminIsUnprotected && (
         <div className="border-b border-rose-500/25 bg-rose-500/10">
           <div className="mx-auto max-w-6xl px-4 py-2 text-xs text-rose-100/90 sm:px-6">
-            <span className="font-bold uppercase tracking-[0.14em]">Unprotected</span> — the
-            admin area has no sign-in yet. Do not deploy it publicly until Supabase
-            authentication is wired up.
+            <span className="font-bold uppercase tracking-[0.14em]">Unprotected</span> — no
+            sign-in, because Supabase is not configured. Configure it to require accounts.
           </div>
         </div>
       )}
@@ -33,29 +35,49 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
           <div className="flex items-center gap-3">
             <Wordmark size="sm" />
             <span className="eyebrow rounded border border-ink-700 px-1.5 py-0.5 text-ink-400">
-              Admin
+              {isSuper ? "Super admin" : "Admin"}
             </span>
           </div>
-          <nav className="flex items-center gap-4 text-sm">
-            <Link href="/admin" className="text-ink-300 transition hover:text-ink-100">
-              Dashboard
-            </Link>
-            <Link href="/" className="text-ink-300 transition hover:text-ink-100">
-              View site
-            </Link>
-            <Link
-              href="/admin/diagnostics"
-              className="text-ink-300 transition hover:text-ink-100"
-            >
-              Diagnostics
-            </Link>
-            <Link
-              href="/admin/broadcasts/new"
-              className="rounded-md bg-flux-400 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-950 transition hover:bg-flux-300"
-            >
-              Create Broadcast
-            </Link>
-          </nav>
+
+          {session && (
+            <nav className="flex flex-wrap items-center gap-4 text-sm">
+              <Link href="/admin" className="text-ink-300 transition hover:text-ink-100">
+                Dashboard
+              </Link>
+              <Link href="/admin/teams" className="text-ink-300 transition hover:text-ink-100">
+                Teams
+              </Link>
+              {isSuper && (
+                <Link
+                  href="/admin/schools"
+                  className="text-ink-300 transition hover:text-ink-100"
+                >
+                  Schools
+                </Link>
+              )}
+              <Link href="/" className="text-ink-300 transition hover:text-ink-100">
+                View site
+              </Link>
+              <Link
+                href="/admin/diagnostics"
+                className="text-ink-300 transition hover:text-ink-100"
+              >
+                Diagnostics
+              </Link>
+              <Link
+                href="/admin/broadcasts/new"
+                className="rounded-md bg-flux-400 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-950 transition hover:bg-flux-300"
+              >
+                Create Broadcast
+              </Link>
+              {session.authenticated && (
+                <span className="flex items-center gap-3 text-xs text-ink-400">
+                  <span className="hidden sm:inline">{session.profile.email}</span>
+                  <SignOutButton />
+                </span>
+              )}
+            </nav>
+          )}
         </div>
       </header>
 

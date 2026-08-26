@@ -9,9 +9,15 @@ import { BroadcastTable } from "@/components/admin/BroadcastTable";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
 
 export default async function AdminDashboardPage() {
-  await requireAdmin();
+  const session = await requireAdmin();
 
-  const broadcasts = await syncBroadcastStatuses(await getDataSource().listBroadcasts());
+  // A school admin sees only their own school; a super admin sees everything.
+  const all = await getDataSource().listBroadcasts();
+  const scoped =
+    session.profile.role === "super_admin"
+      ? all
+      : all.filter((b) => b.school.id === session.profile.schoolId);
+  const broadcasts = await syncBroadcastStatuses(scoped);
 
   const live = selectLive(broadcasts);
   const today = selectToday(broadcasts);
@@ -28,6 +34,7 @@ export default async function AdminDashboardPage() {
           <p className="mt-1 text-sm text-ink-400">
             {broadcasts.length} broadcast{broadcasts.length === 1 ? "" : "s"} · {live.length}{" "}
             live now
+            {session.profile.role === "super_admin" && " · all schools"}
           </p>
         </div>
         <Link

@@ -2,10 +2,13 @@ import type {
   Broadcast,
   BroadcastView,
   CreateBroadcastInput,
+  CreateSchoolInput,
+  CreateTeamInput,
   GameEvent,
   School,
   Sport,
   Team,
+  UpdateBroadcastInput,
 } from "@/lib/types";
 import { buildBroadcastSlug, buildMatchup, slugify } from "@/lib/slug";
 import type { BroadcastPatch, DataSource, TeamOption } from "@/lib/data/source";
@@ -340,6 +343,91 @@ export class MockDataSource implements DataSource {
     const view = toView(db, broadcast);
     if (!view) throw new Error("Failed to build the new broadcast");
     return view;
+  }
+
+  async updateBroadcastDetails(
+    id: string,
+    input: UpdateBroadcastInput,
+  ): Promise<BroadcastView | null> {
+    const db = store();
+    const broadcast = db.broadcasts.find((b) => b.id === id);
+    if (!broadcast) return null;
+    const event = db.events.find((e) => e.id === broadcast.eventId);
+    if (!event) return null;
+
+    event.opponentName = input.opponentName;
+    event.startTime = input.startTime;
+    event.isHome = input.isHome;
+    event.location = input.location;
+
+    broadcast.title = input.title;
+    broadcast.scheduledStart = input.startTime;
+
+    return toView(db, broadcast);
+  }
+
+  async createSchool(input: CreateSchoolInput): Promise<School> {
+    const db = store();
+    const n = db.sequence++;
+    const slug = slugify(input.name);
+    if (db.schools.some((s) => s.slug === slug)) {
+      throw new Error(`A school with the address "${slug}" already exists.`);
+    }
+    const school: School = {
+      id: `school-${n}`,
+      name: input.name,
+      slug,
+      shortName: input.shortName,
+      mascot: input.mascot,
+      city: input.city,
+      state: input.state,
+      logoUrl: null,
+      primaryColor: input.primaryColor,
+      secondaryColor: null,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    db.schools.push(school);
+    return school;
+  }
+
+  async createTeam(input: CreateTeamInput): Promise<TeamOption> {
+    const db = store();
+    const school = db.schools.find((s) => s.id === input.schoolId);
+    const sport = db.sports.find((s) => s.id === input.sportId);
+    if (!school || !sport) throw new Error("Unknown school or sport.");
+    if (
+      db.teams.some(
+        (t) =>
+          t.schoolId === input.schoolId &&
+          t.sportId === input.sportId &&
+          t.level === input.level &&
+          t.gender === input.gender,
+      )
+    ) {
+      throw new Error(`${school.shortName} already has a ${input.level} ${sport.name} team.`);
+    }
+
+    const team: Team = {
+      id: `team-${db.sequence++}`,
+      schoolId: school.id,
+      sportId: sport.id,
+      level: input.level,
+      gender: input.gender,
+      createdAt: new Date().toISOString(),
+    };
+    db.teams.push(team);
+
+    return {
+      id: team.id,
+      schoolId: school.id,
+      schoolName: school.name,
+      schoolShortName: school.shortName,
+      sportId: sport.id,
+      sportName: sport.name,
+      level: team.level,
+      label: `${school.shortName} ${team.level} ${sport.name}`,
+    };
   }
 
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {
