@@ -114,7 +114,10 @@ Milestone 2: persist real events and broadcasts.
 3. In **Project Settings → API Keys**, copy:
    - the **publishable key** (`sb_publishable_…`) — safe for the browser
    - the **secret / service_role key** — server only, never expose it
-4. Put all three in `.env.local` (see [Environment variables](#environment-variables)).
+4. Put all three in `.env.local` as `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`
+   and `SUPABASE_SERVICE_ROLE_KEY` (see
+   [Environment variables](#environment-variables) — note there is deliberately
+   no `NEXT_PUBLIC_` prefix).
 5. Run the migration and seed (next section).
 6. Restart `npm run dev`. The amber banner should stop mentioning Supabase.
 
@@ -148,23 +151,54 @@ Ingress settings first.
 
 Copy `.env.example` to `.env.local` and fill it in. `.env.local` is git-ignored.
 
-| Variable | Required for | Exposed to browser | Notes |
-|---|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Database | Yes | Project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Database | Yes | `sb_publishable_…`; RLS limits it to reads |
-| `SUPABASE_SERVICE_ROLE_KEY` | Database | **No** | Bypasses RLS. Server only |
-| `LIVEKIT_URL` | Streaming | No¹ | `wss://…livekit.cloud` |
-| `LIVEKIT_API_KEY` | Streaming | No | |
-| `LIVEKIT_API_SECRET` | Streaming | **No** | Signs listener tokens |
+| Variable | Required for | Notes |
+|---|---|---|
+| `SUPABASE_URL` | Database | Project URL |
+| `SUPABASE_PUBLISHABLE_KEY` | Database | `sb_publishable_…`; RLS limits it to reads |
+| `SUPABASE_SERVICE_ROLE_KEY` | Database | Bypasses RLS. Treat like a database password |
+| `LIVEKIT_URL` | Streaming | `wss://…livekit.cloud` |
+| `LIVEKIT_API_KEY` | Streaming | |
+| `LIVEKIT_API_SECRET` | Streaming | Signs listener tokens |
 
-¹ The LiveKit URL reaches the browser only alongside a scoped listener token,
-from a server route — never as a build-time public variable.
+**None of these are exposed to the browser, and none should have a
+`NEXT_PUBLIC_` prefix.** All six are read on the server at runtime. The LiveKit
+URL does reach the browser, but only alongside a scoped listener token, handed
+out by a server route.
 
 Each group is all-or-nothing: FluxCast switches to real Supabase only when all
 three Supabase values are set, and to real LiveKit only when all three LiveKit
 values are set. This avoids a confusing half-configured state.
 
 **Never commit real credentials.**
+
+### Why no `NEXT_PUBLIC_` prefix
+
+Next.js treats the two kinds of variable very differently:
+
+| | `NEXT_PUBLIC_FOO` | `FOO` |
+|---|---|---|
+| Resolved | Build time, inlined as a literal | Runtime, read from the environment |
+| Visible to | Browser **and** server | Server only |
+| Change without rebuilding | No | Yes |
+
+The build-time behaviour is the trap. Vercel and similar hosts let you classify
+a variable as a secret, and a secret may not be present during the build — so a
+`NEXT_PUBLIC_` variable can bake in as an empty string and the deployed site
+silently falls back to sample data, with no error anywhere. Those dashboards
+also warn (or refuse) when you mark a `NEXT_PUBLIC_` variable as sensitive,
+because the prefix means "ship this to browsers".
+
+Since nothing in FluxCast reads Supabase config in the browser — both Supabase
+clients are server-side — the plain names are simply correct here.
+
+For compatibility, `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are still accepted as a fallback, since
+some hosting integrations create them for you. The plain names win when both
+are set.
+
+When the admin login form eventually needs a browser Supabase client, pass the
+URL and publishable key down from a Server Component as props rather than
+reintroducing a build-time public variable.
 
 ---
 
@@ -283,8 +317,9 @@ Milestone 4 — the one that matters. You need Supabase and LiveKit configured.
 2. In Vercel, **Add New → Project**, import the repo. Next.js is detected
    automatically; no build settings to change.
 3. Add all six environment variables under **Settings → Environment Variables**
-   for the Production (and Preview) environments. The three secrets must **not**
-   be prefixed with `NEXT_PUBLIC_`.
+   for the Production (and Preview) environments. None of them take a
+   `NEXT_PUBLIC_` prefix, so all six can be stored as secrets without Vercel
+   objecting — see [Why no `NEXT_PUBLIC_` prefix](#why-no-next_public_-prefix).
 4. Deploy.
 
 Everything is serverless-compatible: no long-running processes, no websocket
@@ -386,7 +421,7 @@ src/
     livekit/               Ingress, tokens, status mapping, status sync
     supabase/              Client factories and database types
     auth.ts                requireAdmin() — the single admin authorization point
-    env.ts / env.server.ts Public vs. server-only environment access
+    env.server.ts         Server-only environment access + mode detection
     format.ts, slug.ts, types.ts
 supabase/
   migrations/0001_init.sql
