@@ -257,7 +257,13 @@ is enough:
 2. Paste `supabase/migrations/0001_init.sql`, run it.
 3. Paste `supabase/seed.sql`, run it.
 
-Both are safe to re-run.
+Both are safe to re-run. Re-running `seed.sql` also **repairs** the four sample
+games' kickoff times, locations and statuses, so it is the fix if the sample
+schedule ever looks wrong. Broadcasts you created yourself are never touched.
+
+Kickoff times are computed in the school's local timezone. A plain
+`date_trunc('day', now())` would truncate in the *session* timezone — UTC on
+Supabase — and put every sample game at 2:00 PM Central instead of 7:00 PM.
 
 If you'd rather use the CLI:
 
@@ -311,6 +317,10 @@ RLS is enabled on all five tables with SELECT-only policies for everyone. Fans
 browse without an account, so public reads are correct; nothing is writable with
 the publishable key. All writes go through the service-role client, which only
 ever runs on the server.
+
+Verified against a real Postgres by connecting as the `anon` role: reads
+succeed, `INSERT` is rejected with a row-level security violation, and `UPDATE`
+and `DELETE` affect zero rows.
 
 ---
 

@@ -1,8 +1,21 @@
 -- FluxCast seed data: Homewood High School, Homewood, Alabama.
 --
--- Safe to re-run. Event start times are relative to now() so the sample games
--- stay realistic while you develop. The slugs here match the built-in mock
--- fixtures, so switching from mock mode to Supabase keeps the same URLs.
+-- Safe to re-run. Re-running also REPAIRS the sample games' kickoff times and
+-- statuses, so it is the fix if the schedule ever looks wrong.
+--
+-- Kickoff times are relative to today so the sample schedule stays realistic
+-- while you develop. They are computed in the school's local timezone: a game
+-- is at 7:00 PM in Homewood, not 7:00 PM UTC. Doing this with a plain
+-- `date_trunc('day', now())` would truncate in the *session* timezone (UTC on
+-- Supabase) and land every game at 2:00 PM Central.
+--
+-- The slugs here match the built-in mock fixtures, so switching from mock mode
+-- to Supabase keeps the same URLs.
+
+-- Everything runs in one transaction: the temp table below must survive across
+-- statements (under autocommit, ON COMMIT DROP would remove it immediately),
+-- and an all-or-nothing seed is easier to reason about anyway.
+begin;
 
 -- School -------------------------------------------------------------------
 insert into public.schools
@@ -33,18 +46,15 @@ cross join public.sports sp
 where s.slug = 'homewood' and sp.slug = 'football'
 on conflict (school_id, sport_id, level, gender) do nothing;
 
--- Events + broadcasts ------------------------------------------------------
--- Broadcasts are seeded as 'draft': they have no LiveKit ingress yet. Create
--- one from /admin to move a broadcast to 'ready'.
-with team as (
-  select t.id as team_id, t.sport_id
-  from public.teams t
-  join public.schools s on s.id = t.school_id
-  join public.sports  p on p.id = t.sport_id
-  where s.slug = 'homewood' and p.slug = 'football' and t.level = 'Varsity'
-  limit 1
-),
-sample (opponent, is_home, days_out, location, slug, title, event_status, broadcast_status) as (
+-- Sample games -------------------------------------------------------------
+-- Held in a temp table so the insert and the repair below agree on one list.
+create temporary table _fluxcast_seed on commit drop as
+select *,
+       -- Midnight in Homewood, shifted by days_out, then 19:00 local.
+       ((date_trunc('day', now() at time zone 'America/Chicago')
+         + (days_out || ' days')::interval
+         + interval '19 hours') at time zone 'America/Chicago') as start_time
+from (
   values
     ('Mountain Brook', true, 0, 'Waldrop Stadium, Homewood, AL',
      'homewood-vs-mountain-brook', 'Homewood vs. Mountain Brook',
@@ -58,31 +68,59 @@ sample (opponent, is_home, days_out, location, slug, title, event_status, broadc
     ('Hoover', false, -7, 'Hoover Metropolitan Stadium, Hoover, AL',
      'homewood-at-hoover', 'Homewood at Hoover',
      'final', 'ended')
+) as v (opponent, is_home, days_out, location, slug, title,
+        event_status, broadcast_status);
+
+-- Insert anything missing. Broadcasts start as 'draft': no LiveKit ingress
+-- yet. Create one from /admin to move a broadcast to 'ready'.
+with team as (
+  select t.id as team_id, t.sport_id
+  from public.teams t
+  join public.schools s on s.id = t.school_id
+  join public.sports  p on p.id = t.sport_id
+  where s.slug = 'homewood' and p.slug = 'football' and t.level = 'Varsity'
+  limit 1
 ),
 inserted_events as (
   insert into public.events (sport_id, team_id, opponent_name, is_home, start_time, location, status)
-  select team.sport_id,
-         team.team_id,
-         sample.opponent,
-         sample.is_home,
-         date_trunc('day', now()) + (sample.days_out || ' days')::interval + interval '19 hours',
-         sample.location,
-         sample.event_status
-  from sample
+  select team.sport_id, team.team_id, s.opponent, s.is_home, s.start_time, s.location, s.event_status
+  from _fluxcast_seed s
   cross join team
-  where not exists (select 1 from public.broadcasts b where b.slug = sample.slug)
-  returning id, start_time, opponent_name
+  where not exists (select 1 from public.broadcasts b where b.slug = s.slug)
+  returning id, opponent_name, start_time
 )
 insert into public.broadcasts
   (event_id, title, slug, status, scheduled_start, started_at, ended_at)
 select e.id,
-       sample.title,
-       sample.slug,
-       sample.broadcast_status,
+       s.title,
+       s.slug,
+       s.broadcast_status,
        e.start_time,
-       case when sample.broadcast_status = 'ended' then e.start_time else null end,
-       case when sample.broadcast_status = 'ended'
-            then e.start_time + interval '3 hours' else null end
+       case when s.broadcast_status = 'ended' then e.start_time end,
+       case when s.broadcast_status = 'ended' then e.start_time + interval '3 hours' end
 from inserted_events e
-join sample on sample.opponent = e.opponent_name
+join _fluxcast_seed s on s.opponent = e.opponent_name
 on conflict (slug) do nothing;
+
+-- Repair: bring existing sample rows back in line with the list above. This is
+-- what makes a re-run fix a wrong schedule. Only the four sample slugs are
+-- touched; broadcasts you created yourself are left alone.
+update public.events e
+set start_time = s.start_time,
+    location   = s.location,
+    status     = s.event_status
+from _fluxcast_seed s
+join public.broadcasts b on b.slug = s.slug
+where e.id = b.event_id
+  and e.start_time is distinct from s.start_time;
+
+update public.broadcasts b
+set scheduled_start = e.start_time,
+    started_at      = case when b.status = 'ended' then e.start_time end,
+    ended_at        = case when b.status = 'ended' then e.start_time + interval '3 hours' end
+from public.events e, _fluxcast_seed s
+where e.id = b.event_id
+  and b.slug = s.slug
+  and b.scheduled_start is distinct from e.start_time;
+
+commit;
