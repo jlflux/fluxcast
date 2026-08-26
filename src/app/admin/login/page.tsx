@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { getAdminSession } from "@/lib/auth";
+import { resolveAdminSession } from "@/lib/auth";
 import { isSupabaseConfigured } from "@/lib/env.server";
 import { Wordmark } from "@/components/ui/Wordmark";
 import { LoginForm } from "@/components/admin/LoginForm";
@@ -9,9 +9,14 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in", robots: { index: false, follow: false } };
 
 export default async function LoginPage() {
-  // Already signed in (or running unauthenticated in development).
-  const session = await getAdminSession();
-  if (session) redirect("/admin");
+  // Already signed in (or running unauthenticated in development). An account
+  // that signed in but has no profile goes to the explanation instead of
+  // /admin, which would only redirect back here.
+  const result = await resolveAdminSession();
+  if (result.status === "ok") redirect("/admin");
+  if (result.status === "unprovisioned" || result.status === "error") {
+    redirect("/admin/no-access");
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-16">

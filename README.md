@@ -148,6 +148,13 @@ editor, then:
 5. Sign in at `/admin/login`. The UNPROTECTED banner disappears once Supabase is
    configured, because the admin area now requires a session.
 
+**Order matters.** The trigger only fires on accounts created *after* migration
+0002 runs. A user created before it has no `profiles` row, and a sign-in with no
+profile is not an admin. If that happens you are not stuck: signing in lands on
+`/admin/no-access`, which names your user ID and hands you the exact `insert`
+to run. That page is deliberately reachable while locked out, since
+`/admin/diagnostics` is behind the login you cannot complete.
+
 Use a password manager and a password you have not used elsewhere. If a
 password has ever been pasted into a chat, an email or a ticket, treat it as
 public and change it.
@@ -605,6 +612,7 @@ src/
       teams/                 Add teams to a school
       schools/               Onboard a school (super admin only)
       login/                 Sign in
+      no-access/             Signed in, but the account has no profile row
       diagnostics/           Configuration self-check
     api/broadcasts/[slug]/
       listen/route.ts        Mints listen-only LiveKit tokens

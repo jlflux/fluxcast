@@ -38,6 +38,20 @@ export interface AdminSession {
   authenticated: boolean;
 }
 
+/**
+ * Why an admin session could not be established.
+ *
+ * These are kept apart because they need opposite responses. "anonymous" means
+ * sign in. "unprovisioned" means the sign-in worked and the account simply has
+ * no profile row — sending that person back to the login form produces an
+ * endless bounce with nothing on screen explaining it.
+ */
+export type AdminSessionResult =
+  | { status: "ok"; session: AdminSession }
+  | { status: "anonymous" }
+  | { status: "unprovisioned"; userId: string; email: string | null }
+  | { status: "error"; message: string };
+
 function toRole(value: string): AdminRole {
   return (ADMIN_ROLES as readonly string[]).includes(value)
     ? (value as AdminRole)
@@ -51,16 +65,19 @@ function toRole(value: string): AdminRole {
  * with Supabase, whereas getSession trusts whatever is in the cookie. For an
  * authorization decision only the verified answer will do.
  */
-export async function getAdminSession(): Promise<AdminSession | null> {
+export async function resolveAdminSession(): Promise<AdminSessionResult> {
   if (!isSupabaseConfigured) {
-    return { profile: DEV_PROFILE, authenticated: false };
+    return {
+      status: "ok",
+      session: { profile: DEV_PROFILE, authenticated: false },
+    };
   }
 
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return { status: "anonymous" };
 
   // Read the profile with the service role: a signed-in user must be able to
   // load their own role even before any policy lets them read the table.
@@ -73,32 +90,58 @@ export async function getAdminSession(): Promise<AdminSession | null> {
 
   if (error) {
     console.error(`[fluxcast] Could not load profile for ${user.id}: ${error.message}`);
-    return null;
+    return { status: "error", message: error.message };
   }
+
   if (!data) {
-    // Authenticated but not provisioned. Treated as not an admin.
-    console.warn(`[fluxcast] No profile row for authenticated user ${user.id}`);
-    return null;
+    console.warn(
+      `[fluxcast] Authenticated user ${user.id} (${user.email ?? "no email"}) has no profiles row.`,
+    );
+    return { status: "unprovisioned", userId: user.id, email: user.email ?? null };
   }
 
   return {
-    profile: {
-      id: data.id,
-      email: data.email,
-      fullName: data.full_name,
-      role: toRole(data.role),
-      schoolId: data.school_id,
-      createdAt: data.created_at,
+    status: "ok",
+    session: {
+      profile: {
+        id: data.id,
+        email: data.email,
+        fullName: data.full_name,
+        role: toRole(data.role),
+        schoolId: data.school_id,
+        createdAt: data.created_at,
+      },
+      authenticated: true,
     },
-    authenticated: true,
   };
 }
 
-/** Redirects to the login page when there is no admin session. */
+/** Convenience wrapper for places that only care whether there is a session. */
+export async function getAdminSession(): Promise<AdminSession | null> {
+  const result = await resolveAdminSession();
+  return result.status === "ok" ? result.session : null;
+}
+
+/**
+ * Redirects when there is no admin session.
+ *
+ * An unprovisioned or errored account goes to an explanation, not back to the
+ * login form — bouncing a successful sign-in straight back to the form is the
+ * most confusing failure this app can produce.
+ */
 export async function requireAdmin(): Promise<AdminSession> {
-  const session = await getAdminSession();
-  if (!session) redirect("/admin/login");
-  return session;
+  const result = await resolveAdminSession();
+  switch (result.status) {
+    case "ok":
+      return result.session;
+    // redirect() throws, so these cases never fall through.
+    case "anonymous":
+      redirect("/admin/login");
+    case "unprovisioned":
+      redirect("/admin/no-access");
+    case "error":
+      redirect("/admin/no-access?problem=lookup");
+  }
 }
 
 /** Redirects unless the signed-in admin is FluxCast staff. */
