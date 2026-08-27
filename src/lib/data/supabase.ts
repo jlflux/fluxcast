@@ -48,7 +48,7 @@ type TeamRowWithRelations = {
 
 const BROADCAST_SELECT = `
   id, event_id, title, slug, status, livekit_room_name, livekit_ingress_id,
-  stream_url, scheduled_start, started_at, ended_at, created_at,
+  stream_url, scheduled_start, started_at, ended_at, interrupted_at, created_at,
   event:events!inner (
     id, sport_id, team_id, opponent_name, is_home, start_time, location, status, created_at,
     sport:sports!inner ( id, name, slug ),
@@ -111,6 +111,7 @@ function toView(row: JoinedBroadcastRow): BroadcastView | null {
     scheduledStart: row.scheduled_start,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    interruptedAt: row.interrupted_at,
     livekitRoomName: row.livekit_room_name,
     livekitIngressId: row.livekit_ingress_id,
     streamUrl: row.stream_url,
@@ -449,6 +450,7 @@ export class SupabaseDataSource implements DataSource {
         ...(patch.streamUrl !== undefined && { stream_url: patch.streamUrl }),
         ...(patch.startedAt !== undefined && { started_at: patch.startedAt }),
         ...(patch.endedAt !== undefined && { ended_at: patch.endedAt }),
+        ...(patch.interruptedAt !== undefined && { interrupted_at: patch.interruptedAt }),
       })
       .eq("id", id);
     if (error) {

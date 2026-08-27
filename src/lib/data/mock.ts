@@ -138,6 +138,7 @@ function seed(): MockStore {
       scheduledStart: minutesAgo(35),
       startedAt: minutesAgo(38),
       endedAt: null,
+      interruptedAt: null,
       createdAt: minutesAgo(60 * 24 * 20),
     },
     {
@@ -152,6 +153,7 @@ function seed(): MockStore {
       scheduledStart: kickoff(7),
       startedAt: null,
       endedAt: null,
+      interruptedAt: null,
       createdAt: minutesAgo(60 * 24 * 20),
     },
     {
@@ -166,6 +168,7 @@ function seed(): MockStore {
       scheduledStart: kickoff(14),
       startedAt: null,
       endedAt: null,
+      interruptedAt: null,
       createdAt: minutesAgo(60 * 24 * 20),
     },
     {
@@ -180,6 +183,7 @@ function seed(): MockStore {
       scheduledStart: kickoff(-7),
       startedAt: kickoff(-7),
       endedAt: kickoff(-7),
+      interruptedAt: null,
       createdAt: minutesAgo(60 * 24 * 30),
     },
   ];
@@ -224,6 +228,7 @@ function toView(db: MockStore, broadcast: Broadcast): BroadcastView | null {
     scheduledStart: broadcast.scheduledStart,
     startedAt: broadcast.startedAt,
     endedAt: broadcast.endedAt,
+    interruptedAt: null,
     livekitRoomName: broadcast.livekitRoomName,
     livekitIngressId: broadcast.livekitIngressId,
     streamUrl: broadcast.streamUrl,
@@ -336,6 +341,7 @@ export class MockDataSource implements DataSource {
       scheduledStart: input.startTime,
       startedAt: null,
       endedAt: null,
+      interruptedAt: null,
       createdAt: new Date().toISOString(),
     };
     db.broadcasts.push(broadcast);

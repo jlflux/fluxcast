@@ -102,6 +102,8 @@ export interface Broadcast {
   scheduledStart: string;
   startedAt: string | null;
   endedAt: string | null;
+  /** When the encoder dropped out of a live broadcast. Null when healthy. */
+  interruptedAt: string | null;
   createdAt: string;
 }
 
@@ -117,6 +119,7 @@ export interface BroadcastView {
   scheduledStart: string;
   startedAt: string | null;
   endedAt: string | null;
+  interruptedAt: string | null;
   livekitRoomName: string | null;
   livekitIngressId: string | null;
   streamUrl: string | null;
@@ -189,4 +192,33 @@ export interface CreateTeamInput {
   sportId: string;
   level: string;
   gender: string | null;
+}
+
+
+/**
+ * True when a broadcast went live and then lost its encoder.
+ *
+ * Derived rather than stored as a seventh status: a `ready` broadcast that has
+ * already started is, by definition, one whose feed dropped. Fans see
+ * "reconnecting", not "begins at 7:00 PM".
+ */
+export function isInterrupted(broadcast: {
+  status: BroadcastStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+}): boolean {
+  return (
+    (broadcast.status === "ready" || broadcast.status === "connected") &&
+    broadcast.startedAt !== null &&
+    broadcast.endedAt === null
+  );
+}
+
+/** Should the listener player be mounted for this status? */
+export function shouldMountPlayer(broadcast: {
+  status: BroadcastStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+}): boolean {
+  return broadcast.status === "live" || isInterrupted(broadcast);
 }

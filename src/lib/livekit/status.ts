@@ -16,30 +16,32 @@ export const INGRESS_STATUS = {
 } as const;
 
 /**
- * Map LiveKit's ingress state onto a FluxCast broadcast status.
+ * What LiveKit's ingress state means for a broadcast.
  *
- * This mapping is the whole reason ingress polling is enough for the
- * prototype — LiveKit already tracks exactly the five states we want to show.
+ * Deliberately does NOT decide "ended". Losing the encoder is indistinguishable
+ * from a broadcast finishing, and guessing wrong is expensive in one direction:
+ * marking a broadcast ended is terminal, so a dropped connection in the third
+ * quarter would kill it for good. `syncBroadcastStatus` layers the
+ * interruption and grace-period rules on top of this.
  */
-export function ingressStatusToBroadcastStatus(
-  status: number | undefined,
-  previous: BroadcastStatus,
-): BroadcastStatus {
+export type IngressSignal = "publishing" | "buffering" | "encoder-gone" | "error" | "unknown";
+
+export function readIngressSignal(status: number | undefined): IngressSignal {
   switch (status) {
-    case INGRESS_STATUS.ENDPOINT_INACTIVE:
-      // Never connected yet, or the encoder disconnected. If we had already
-      // gone live, treat a return to inactive as the broadcast having ended.
-      return previous === "live" || previous === "connected" ? "ended" : "ready";
-    case INGRESS_STATUS.ENDPOINT_BUFFERING:
-      return "connected";
     case INGRESS_STATUS.ENDPOINT_PUBLISHING:
-      return "live";
+      return "publishing";
+    case INGRESS_STATUS.ENDPOINT_BUFFERING:
+      return "buffering";
+    case INGRESS_STATUS.ENDPOINT_INACTIVE:
+    // COMPLETE is grouped with INACTIVE on purpose. Either way the encoder is
+    // gone and the ingress can be reconnected to with the same URL and key, so
+    // neither is proof the broadcast is over.
+    case INGRESS_STATUS.ENDPOINT_COMPLETE:
+      return "encoder-gone";
     case INGRESS_STATUS.ENDPOINT_ERROR:
       return "error";
-    case INGRESS_STATUS.ENDPOINT_COMPLETE:
-      return "ended";
     default:
-      return previous;
+      return "unknown";
   }
 }
 

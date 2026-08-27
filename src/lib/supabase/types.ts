@@ -66,8 +66,9 @@ export type BroadcastRow = {
   scheduled_start: string;
   started_at: string | null;
   ended_at: string | null;
+  interrupted_at: string | null;
   created_at: string;
-}
+};
 
 export type ProfileRow = {
   id: string;
@@ -97,7 +98,8 @@ export type BroadcastInsert = {
   stream_url?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
-}
+  interrupted_at?: string | null;
+};
 
 type Table<Row, Insert> = {
   Row: Row;

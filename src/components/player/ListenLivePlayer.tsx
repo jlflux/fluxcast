@@ -31,6 +31,13 @@ import { useMediaSession } from "@/components/player/useMediaSession";
  * So we connect with `autoSubscribe: false` and subscribe only to audio
  * publications. Video reaches LiveKit but never reaches a fan.
  *
+ * SURVIVING A DROPPED STREAM. A broadcast losing its encoder is normal — a van
+ * moves, a router reboots, someone restarts OBS. The listener stays in the
+ * LiveKit room throughout: when the publisher goes the player says it is
+ * waiting, and when the feed returns the track is republished and playback
+ * resumes on its own, with no tap required. If the listener's own connection
+ * drops instead, it rejoins with backoff. Only pressing Stop ends it.
+ *
  * No account, no publishing permission, and no LiveKit secret in the browser.
  *
  * Errors are logged to the console for us and translated into plain language
@@ -43,6 +50,7 @@ type PlayerState =
   | "connecting"
   | "buffering"
   | "playing"
+  | "waiting"
   | "reconnecting"
   | "ended"
   | "error"
@@ -54,7 +62,8 @@ const MESSAGES: Record<PlayerState, string> = {
   connecting: "Connecting to the broadcast…",
   buffering: "Connected. Waiting for audio…",
   playing: "You're listening live.",
-  reconnecting: "Connection dropped. Reconnecting…",
+  waiting: "The broadcast dropped out. Waiting for it to come back…",
+  reconnecting: "Reconnecting…",
   ended: "This broadcast has ended.",
   error: "We couldn't connect to this broadcast. Please try again in a moment.",
   unavailable: "This broadcast isn't on the air right now.",
@@ -64,12 +73,15 @@ const MESSAGES: Record<PlayerState, string> = {
 export function ListenLivePlayer({
   slug,
   initialStatus,
+  interrupted = false,
   matchup,
   competition,
   schoolName,
 }: {
   slug: string;
   initialStatus: BroadcastStatus;
+  /** The broadcast went live and is mid-dropout. */
+  interrupted?: boolean;
   /** Shown on the phone's lock screen. */
   matchup: string;
   competition: string;
@@ -84,13 +96,35 @@ export function ListenLivePlayer({
   const roomRef = useRef<Room | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  /** Set when the fan presses Stop, so we do not fight their decision. */
+  const stoppedByUserRef = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const retryCountRef = useRef(0);
 
   const teardown = useCallback(() => {
+    clearTimeout(retryTimerRef.current);
     roomRef.current?.disconnect();
     roomRef.current = null;
     setAnalyser(null);
     void audioContextRef.current?.close().catch(() => undefined);
     audioContextRef.current = null;
+  }, []);
+
+  /**
+   * `connect` is recreated on each render, so a reconnect scheduled from an
+   * event handler needs the current one — hence a ref rather than a closure.
+   */
+  const connectRef = useRef<() => Promise<void>>(async () => {});
+
+  /** Retry with backoff, capped so a long outage does not hammer the server. */
+  const scheduleRetry = useCallback(() => {
+    if (stoppedByUserRef.current) return;
+    const attempt = retryCountRef.current++;
+    const delay = Math.min(2000 * 2 ** Math.min(attempt, 4), 30_000);
+    clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => {
+      void connectRef.current();
+    }, delay);
   }, []);
 
   useEffect(() => teardown, [teardown]);
@@ -101,8 +135,9 @@ export function ListenLivePlayer({
 
   const connect = useCallback(async () => {
     if (roomRef.current) return;
+    stoppedByUserRef.current = false;
     setDevNotice(false);
-    setState("connecting");
+    setState((current) => (current === "idle" ? "connecting" : current));
 
     let payload: {
       url?: string;
@@ -118,10 +153,21 @@ export function ListenLivePlayer({
 
       if (!response.ok) {
         if (payload.error === "not_live") {
-          setState(payload.status === "ended" ? "ended" : "unavailable");
+          if (payload.status === "ended") {
+            stoppedByUserRef.current = true;
+            setState("ended");
+          } else if (retryCountRef.current > 0) {
+            // Mid-reconnect and the feed is not back yet. Keep waiting rather
+            // than telling a fan the game is off the air.
+            setState("waiting");
+            scheduleRetry();
+          } else {
+            setState("unavailable");
+          }
         } else {
           console.error("[fluxcast] listen token request failed", payload);
           setState("error");
+          scheduleRetry();
         }
         return;
       }
@@ -199,13 +245,27 @@ export function ListenLivePlayer({
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
         if (track.kind !== Track.Kind.Audio) return;
         track.detach();
-        setState((current) => (current === "playing" ? "buffering" : current));
+        setAnalyser(null);
+        // The publisher went away, not us. Stay in the room and wait — when
+        // the encoder reconnects the track is republished and TrackSubscribed
+        // fires again, resuming playback with no tap from the fan.
+        setState((current) =>
+          current === "playing" || current === "buffering" ? "waiting" : current,
+        );
+      })
+      .on(RoomEvent.ParticipantDisconnected, () => {
+        setState((current) => (current === "playing" ? "waiting" : current));
       })
       .on(RoomEvent.Reconnecting, () => setState("reconnecting"))
-      .on(RoomEvent.Reconnected, () => setState("buffering"))
+      .on(RoomEvent.Reconnected, () => setState("waiting"))
       .on(RoomEvent.Disconnected, () => {
+        // Our own connection gave up. LiveKit already retried internally, so
+        // rejoin from scratch with a fresh token.
         roomRef.current = null;
-        setState((current) => (current === "playing" ? "ended" : current));
+        setAnalyser(null);
+        if (stoppedByUserRef.current) return;
+        setState("reconnecting");
+        scheduleRetry();
       });
 
     try {
@@ -218,15 +278,24 @@ export function ListenLivePlayer({
       room.remoteParticipants.forEach(subscribeAudioOf);
       // Safari in particular needs an explicit nudge inside the gesture.
       await room.startAudio().catch(() => undefined);
+      retryCountRef.current = 0;
       setState((current) => (current === "playing" ? current : "buffering"));
     } catch (error) {
       console.error("[fluxcast] LiveKit connection failed", error);
-      teardown();
-      setState("error");
+      roomRef.current = null;
+      setState("reconnecting");
+      scheduleRetry();
     }
-  }, [slug, teardown, volume]);
+  }, [slug, volume, scheduleRetry]);
+
+  // Keep the ref pointing at the latest connect for scheduled retries.
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const stop = useCallback(() => {
+    stoppedByUserRef.current = true;
+    retryCountRef.current = 0;
     teardown();
     setState("idle");
   }, [teardown]);
@@ -240,9 +309,11 @@ export function ListenLivePlayer({
   });
 
   const isConnecting = state === "connecting" || state === "reconnecting";
-  const isConnected = state === "playing" || state === "buffering" || isConnecting;
+  const isConnected =
+    state === "playing" || state === "buffering" || state === "waiting" || isConnecting;
 
-  if (initialStatus !== "live" && state === "idle") {
+  // Render while live, while mid-dropout, or whenever we are already connected.
+  if (initialStatus !== "live" && !interrupted && state === "idle") {
     return null;
   }
 
@@ -258,7 +329,7 @@ export function ListenLivePlayer({
             onClick={stop}
             className="w-full rounded-xl border border-ink-700 bg-ink-800 px-6 py-4 text-base font-extrabold uppercase tracking-wide text-ink-100 transition hover:bg-ink-700 sm:text-lg"
           >
-            {isConnecting ? "Connecting…" : "Stop Listening"}
+            {state === "connecting" ? "Connecting…" : "Stop Listening"}
           </button>
         ) : (
           <button
@@ -285,7 +356,7 @@ export function ListenLivePlayer({
           </p>
         )}
 
-        {(state === "playing" || state === "buffering") && (
+        {(state === "playing" || state === "buffering" || state === "waiting") && (
           <LevelMeter analyser={analyser} active={state === "playing"} />
         )}
 

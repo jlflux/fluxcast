@@ -12,9 +12,12 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { StreamDestination } from "@/components/admin/StreamDestination";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
 import {
+  endBroadcastAction,
   generateStreamDestinationAction,
+  reopenBroadcastAction,
   simulateStatusAction,
 } from "@/actions/broadcasts";
+import { isInterrupted } from "@/lib/types";
 
 export default async function AdminBroadcastPage({
   params,
@@ -27,6 +30,7 @@ export default async function AdminBroadcastPage({
   if (!canManageSchool(session, broadcast.school.id)) redirect("/admin?denied=school");
 
   const status = await syncBroadcastStatus(broadcast);
+  const interrupted = isInterrupted({ ...broadcast, status });
 
   const credentials = broadcast.livekitIngressId
     ? await getStreamCredentials(broadcast.livekitIngressId).catch((error) => {
@@ -37,7 +41,9 @@ export default async function AdminBroadcastPage({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <AdminRefresher hasActiveBroadcasts={status === "connected" || status === "live"} />
+      <AdminRefresher
+        hasActiveBroadcasts={status === "connected" || status === "live" || interrupted}
+      />
 
       <Link href="/admin" className="text-sm text-ink-400 transition hover:text-ink-200">
         ← Dashboard
@@ -57,7 +63,11 @@ export default async function AdminBroadcastPage({
           {formatKickoff(broadcast.scheduledStart)}
           {broadcast.location ? ` · ${broadcast.location}` : ""}
         </p>
-        <p className="mt-3 text-sm text-ink-300">{STATUS_HINT[status]}</p>
+        <p className="mt-3 text-sm text-ink-300">
+          {interrupted
+            ? "The encoder disconnected. The broadcast is waiting for it to come back — reconnect OBS with the same stream URL and key and it resumes automatically."
+            : STATUS_HINT[status]}
+        </p>
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <Link
             href={`/admin/broadcasts/${broadcast.id}/edit`}
@@ -65,6 +75,29 @@ export default async function AdminBroadcastPage({
           >
             Edit details
           </Link>
+          {status === "ended" && broadcast.livekitIngressId ? (
+            <form action={reopenBroadcastAction}>
+              <input type="hidden" name="broadcastId" value={broadcast.id} />
+              <button
+                type="submit"
+                className="rounded-md border border-ink-700 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-200 transition hover:border-ink-600 hover:bg-ink-800"
+              >
+                Reopen
+              </button>
+            </form>
+          ) : (
+            status !== "draft" && (
+              <form action={endBroadcastAction}>
+                <input type="hidden" name="broadcastId" value={broadcast.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-rose-500/40 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-rose-200 transition hover:bg-rose-500/10"
+                >
+                  End broadcast
+                </button>
+              </form>
+            )
+          )}
           <Link
             href={`/broadcasts/${broadcast.slug}`}
             className="text-sm font-semibold text-flux-400 transition hover:text-flux-300"

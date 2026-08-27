@@ -4,8 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { AccessToken, IngressClient, IngressInput } from "livekit-server-sdk";
 
 import { isLiveKitConfigured, serverEnv } from "@/lib/env.server";
-import type { BroadcastStatus } from "@/lib/types";
-import { ingressStatusToBroadcastStatus } from "@/lib/livekit/status";
+import { readIngressSignal, type IngressSignal } from "@/lib/livekit/status";
 
 /**
  * FluxCast's LiveKit integration layer.
@@ -136,15 +135,12 @@ export async function getStreamCredentials(
 }
 
 /** Ask LiveKit whether audio is currently arriving on this ingress. */
-export async function getIngressBroadcastStatus(
-  ingressId: string,
-  previous: BroadcastStatus,
-): Promise<BroadcastStatus> {
-  if (!isLiveKitConfigured) return previous;
+export async function getIngressSignal(ingressId: string): Promise<IngressSignal> {
+  if (!isLiveKitConfigured) return "unknown";
 
   const [info] = await ingressClient().listIngress({ ingressId });
-  if (!info) return previous;
-  return ingressStatusToBroadcastStatus(info.state?.status, previous);
+  if (!info) return "unknown";
+  return readIngressSignal(info.state?.status);
 }
 
 /** Remove an ingress. Used when a broadcast is deleted or regenerated. */

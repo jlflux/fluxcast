@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { getDataSource } from "@/lib/data";
+import { isInterrupted } from "@/lib/types";
 import { syncBroadcastStatus } from "@/lib/livekit/sync";
 import { formatLongDay, formatTime } from "@/lib/format";
 import { LiveBadge } from "@/components/ui/LiveBadge";
@@ -69,6 +70,7 @@ export default async function BroadcastPage({ params }: PageProps<"/broadcasts/[
 
       <BroadcastState
         status={status}
+        interrupted={isInterrupted({ ...broadcast, status })}
         slug={slug}
         scheduledStart={broadcast.scheduledStart}
         matchup={broadcast.matchup}
@@ -81,6 +83,7 @@ export default async function BroadcastPage({ params }: PageProps<"/broadcasts/[
 
 function BroadcastState({
   status,
+  interrupted,
   slug,
   scheduledStart,
   matchup,
@@ -88,21 +91,33 @@ function BroadcastState({
   schoolName,
 }: {
   status: import("@/lib/types").BroadcastStatus;
+  interrupted: boolean;
   slug: string;
   scheduledStart: string;
   matchup: string;
   competition: string;
   schoolName: string;
 }) {
-  if (status === "live") {
+  // Mid-dropout the player stays mounted, so an existing listener keeps their
+  // LiveKit connection and resumes automatically when the feed returns.
+  if (status === "live" || interrupted) {
     return (
-      <ListenLivePlayer
-        slug={slug}
-        initialStatus={status}
-        matchup={matchup}
-        competition={competition}
-        schoolName={schoolName}
-      />
+      <>
+        <ListenLivePlayer
+          slug={slug}
+          initialStatus={status}
+          interrupted={interrupted}
+          matchup={matchup}
+          competition={competition}
+          schoolName={schoolName}
+        />
+        {interrupted && (
+          <p className="mt-4 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-center text-sm text-amber-100/90">
+            The feed from the booth dropped out. This page reconnects on its own as soon as
+            it&rsquo;s back — no need to refresh.
+          </p>
+        )}
+      </>
     );
   }
 

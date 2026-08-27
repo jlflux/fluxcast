@@ -340,6 +340,8 @@ SQL lives in `supabase/`:
 - `migrations/0001_init.sql` — tables, constraints, indexes, RLS policies
 - `migrations/0002_auth_and_roles.sql` — admin accounts, roles, and the RLS
   policies that scope each school's admin to their own data
+- `migrations/0003_broadcast_interruptions.sql` — lets a broadcast survive a
+  dropped encoder instead of ending
 - `seed.sql` — Homewood High School, Football, Varsity Football, and four
   sample games
 
@@ -349,7 +351,8 @@ is enough:
 1. Open your project → **SQL Editor** → **New query**.
 2. Paste `supabase/migrations/0001_init.sql`, run it.
 3. Paste `supabase/migrations/0002_auth_and_roles.sql`, run it.
-4. Paste `supabase/seed.sql`, run it.
+4. Paste `supabase/migrations/0003_broadcast_interruptions.sql`, run it.
+5. Paste `supabase/seed.sql`, run it.
 
 Both are safe to re-run. Re-running `seed.sql` also **repairs** the four sample
 games' kickoff times, locations and statuses, so it is the fix if the sample
@@ -484,6 +487,7 @@ encoder) would be cheaper still. Not needed for the prototype.
 | Symptom | Likely cause |
 |---|---|
 | Status stays `Ready` | Encoder isn't connecting. Re-check the URL and key; some encoders need the key pasted with no trailing space. |
+| Went `Live`, now `Ready` again | The encoder dropped out. Reconnect OBS with the same URL and key — it resumes on its own. |
 | Status goes to `Error` | LiveKit rejected the stream. Check your encoder's audio codec (AAC) and that video isn't being sent at an unsupported resolution. |
 | Fan sees "couldn't connect" | Open the browser console — the underlying error is logged there. Fans only ever see plain language. |
 | Nothing plays on iPhone | Audio must start from a tap. Make sure you're tapping LISTEN LIVE rather than expecting autoplay. |
@@ -559,6 +563,42 @@ hearing nothing can tell within a second whether the broadcast is silent or
 their phone is muted. The analyser is a read-only tap — it is deliberately not
 connected to the audio destination, since the `<audio>` element is already
 playing the track and connecting both would play it twice.
+
+### Surviving a dropped stream
+
+A broadcast losing its encoder is normal: a van moves, a router reboots, an
+operator restarts OBS at halftime. FluxCast treats that as an **interruption**,
+not an ending.
+
+| | Before | Now |
+|---|---|---|
+| Encoder disconnects | Broadcast marked `ended` | Marked `ready`, `interrupted_at` recorded |
+| `ended` is terminal | Polling stopped for good | Only reached deliberately |
+| Encoder returns | Never noticed | Back to `live` automatically |
+| Fan's page | "This broadcast has ended" | Player stays mounted, "waiting for it to come back" |
+
+What makes it work:
+
+- **The status mapping refuses to guess.** LiveKit's `ENDPOINT_INACTIVE` and
+  `ENDPOINT_COMPLETE` are both read as "encoder gone", which is not the same as
+  "broadcast over" — the ingress stays valid and the same stream URL and key can
+  be reconnected to.
+- **The listener stays in the LiveKit room.** Only the publisher left. When the
+  encoder reconnects, the track is republished, `TrackSubscribed` fires again
+  and audio resumes with no tap from the fan. If the *listener's* own connection
+  drops instead, the player rejoins with capped exponential backoff.
+- **The page keeps the player mounted** while interrupted, so a status refresh
+  cannot unmount it and kill playback.
+- **Tokens are still issued** during an interruption, so a fan arriving
+  mid-dropout waits in the room rather than being told the game is off the air.
+
+Two things end a broadcast: an admin presses **End broadcast**, or the
+interruption outlasts a 30-minute grace period (`INTERRUPTION_GRACE_MS` in
+`src/lib/livekit/sync.ts`). An `ended` broadcast can be reopened from the admin
+page — its ingress is left in place, so the same stream key still works.
+
+The state machine lives in `decideStatus()`, split out from the I/O so it can
+be reasoned about on its own.
 
 ### Listener security
 

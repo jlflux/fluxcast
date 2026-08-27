@@ -30,6 +30,7 @@ export interface BroadcastPatch {
   streamUrl?: string | null;
   startedAt?: string | null;
   endedAt?: string | null;
+  interruptedAt?: string | null;
 }
 
 /**

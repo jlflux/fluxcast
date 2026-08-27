@@ -328,3 +328,72 @@ export async function createSchoolAction(
     };
   }
 }
+
+
+/**
+ * End a broadcast by hand.
+ *
+ * Losing the encoder no longer ends a broadcast on its own — that is what lets
+ * a dropped stream come back — so an operator needs a way to say "the game is
+ * over". Without this, a finished broadcast would sit on the homepage saying
+ * "reconnecting" until the grace period ran out.
+ *
+ * The LiveKit ingress is deliberately left in place: it costs nothing idle,
+ * and keeping it means the same stream URL and key still work if the broadcast
+ * is reopened.
+ */
+export async function endBroadcastAction(formData: FormData): Promise<void> {
+  const session = await requireAdmin();
+
+  const broadcastId = text(formData, "broadcastId");
+  if (!broadcastId) return;
+
+  const data = getDataSource();
+  const broadcast = await data.getBroadcastById(broadcastId);
+  if (!broadcast) return;
+  if (!canManageSchool(session, broadcast.school.id)) return;
+
+  const now = new Date().toISOString();
+  await data.updateBroadcast(broadcast.id, {
+    status: "ended",
+    endedAt: now,
+    interruptedAt: null,
+    ...(broadcast.startedAt ? {} : { startedAt: now }),
+  });
+
+  revalidatePath(`/admin/broadcasts/${broadcast.id}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/broadcasts/${broadcast.slug}`);
+}
+
+/**
+ * Reopen a broadcast that was ended.
+ *
+ * `ended` stops FluxCast polling LiveKit, so a broadcast ended by mistake --
+ * or one whose grace period expired during a long outage -- would otherwise
+ * stay dead even with the encoder streaming again.
+ */
+export async function reopenBroadcastAction(formData: FormData): Promise<void> {
+  const session = await requireAdmin();
+
+  const broadcastId = text(formData, "broadcastId");
+  if (!broadcastId) return;
+
+  const data = getDataSource();
+  const broadcast = await data.getBroadcastById(broadcastId);
+  if (!broadcast) return;
+  if (!canManageSchool(session, broadcast.school.id)) return;
+  if (!broadcast.livekitIngressId) return;
+
+  await data.updateBroadcast(broadcast.id, {
+    status: "ready",
+    endedAt: null,
+    interruptedAt: null,
+  });
+
+  revalidatePath(`/admin/broadcasts/${broadcast.id}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/broadcasts/${broadcast.slug}`);
+}

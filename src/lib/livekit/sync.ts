@@ -3,7 +3,8 @@ import "server-only";
 import type { BroadcastStatus, BroadcastView } from "@/lib/types";
 import { getDataSource } from "@/lib/data";
 import type { BroadcastPatch } from "@/lib/data/source";
-import { getIngressBroadcastStatus } from "@/lib/livekit/service";
+import { getIngressSignal } from "@/lib/livekit/service";
+import type { IngressSignal } from "@/lib/livekit/status";
 import { isLiveKitConfigured } from "@/lib/env.server";
 
 /**
@@ -33,8 +34,24 @@ function cache(): Map<string, { at: number; status: BroadcastStatus }> {
   return globalForCache.__fluxcastStatusCache;
 }
 
-/** Statuses that are settled — no point asking LiveKit again. */
+/**
+ * Statuses that are settled — no point asking LiveKit again.
+ *
+ * A broadcast only reaches `ended` because an admin ended it, or because an
+ * interruption outlasted the grace period. Losing the encoder no longer lands
+ * here, which is what lets a dropped stream come back.
+ */
 const TERMINAL: readonly BroadcastStatus[] = ["ended"];
+
+/**
+ * How long a broadcast may sit without an encoder before it is called over.
+ *
+ * Long enough to survive a router reboot, a van moving, or an operator
+ * restarting OBS at halftime. Short enough that a broadcast someone simply
+ * walked away from does not sit on the homepage saying "reconnecting" all
+ * night.
+ */
+const INTERRUPTION_GRACE_MS = 30 * 60 * 1000;
 
 /**
  * Read the live status of a broadcast from LiveKit and persist any change.
@@ -54,9 +71,9 @@ export async function syncBroadcastStatus(
   const cached = cache().get(key);
   if (cached && Date.now() - cached.at < THROTTLE_MS) return cached.status;
 
-  let next: BroadcastStatus;
+  let signal;
   try {
-    next = await getIngressBroadcastStatus(key, broadcast.status);
+    signal = await getIngressSignal(key);
   } catch (error) {
     console.error(
       `[fluxcast] Could not read LiveKit ingress ${key}:`,
@@ -65,20 +82,66 @@ export async function syncBroadcastStatus(
     return broadcast.status;
   }
 
+  const { status: next, patch } = decideStatus(broadcast, signal);
+
   cache().set(key, { at: Date.now(), status: next });
 
-  if (next !== broadcast.status) {
-    const patch: BroadcastPatch = { status: next };
-    if (next === "live" && !broadcast.startedAt) {
-      patch.startedAt = new Date().toISOString();
-    }
-    if (next === "ended" && !broadcast.endedAt) {
-      patch.endedAt = new Date().toISOString();
-    }
-    await getDataSource().updateBroadcast(broadcast.id, patch);
+  if (next !== broadcast.status || Object.keys(patch).length > 0) {
+    await getDataSource().updateBroadcast(broadcast.id, { status: next, ...patch });
   }
 
   return next;
+}
+
+/**
+ * The interruption state machine.
+ *
+ * Split out from the I/O so it can be reasoned about — and tested — on its own.
+ */
+export function decideStatus(
+  broadcast: Pick<BroadcastView, "status" | "startedAt" | "endedAt" | "interruptedAt">,
+  signal: IngressSignal,
+  now: number = Date.now(),
+): { status: BroadcastStatus; patch: BroadcastPatch } {
+  const nowIso = new Date(now).toISOString();
+
+  switch (signal) {
+    case "publishing": {
+      // Audio is flowing. Clear any interruption; this is also the path a
+      // reconnected stream takes back to live.
+      const patch: BroadcastPatch = { interruptedAt: null, endedAt: null };
+      if (!broadcast.startedAt) patch.startedAt = nowIso;
+      return { status: "live", patch };
+    }
+
+    case "buffering":
+      return { status: "connected", patch: { interruptedAt: null, endedAt: null } };
+
+    case "error":
+      return { status: "error", patch: {} };
+
+    case "encoder-gone": {
+      // Never started: the ingress is simply waiting for its first connection.
+      if (!broadcast.startedAt) {
+        return { status: "ready", patch: {} };
+      }
+
+      // Was live and the encoder has just gone. Start the grace clock.
+      if (!broadcast.interruptedAt) {
+        return { status: "ready", patch: { interruptedAt: nowIso } };
+      }
+
+      // Still gone. End it only once the grace period has run out.
+      const goneFor = now - Date.parse(broadcast.interruptedAt);
+      if (goneFor >= INTERRUPTION_GRACE_MS) {
+        return { status: "ended", patch: { endedAt: nowIso } };
+      }
+      return { status: "ready", patch: {} };
+    }
+
+    default:
+      return { status: broadcast.status, patch: {} };
+  }
 }
 
 /** Sync a batch of broadcasts, e.g. for the admin dashboard. */

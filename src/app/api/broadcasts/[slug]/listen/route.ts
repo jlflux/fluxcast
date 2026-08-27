@@ -4,6 +4,7 @@ import { getDataSource } from "@/lib/data";
 import { createListenerToken } from "@/lib/livekit/service";
 import { syncBroadcastStatus } from "@/lib/livekit/sync";
 import { streamingMode } from "@/lib/env.server";
+import { isInterrupted } from "@/lib/types";
 
 /**
  * Mint a listen-only LiveKit token for an anonymous fan.
@@ -30,7 +31,13 @@ export async function POST(_request: Request, { params }: RouteContext<"/api/bro
 
   const status = await syncBroadcastStatus(broadcast);
 
-  if (status !== "live") {
+  // A broadcast mid-dropout still hands out tokens: being in the room already
+  // is what lets playback resume the instant the encoder reconnects, with no
+  // action from the fan.
+  const joinable =
+    status === "live" || isInterrupted({ ...broadcast, status });
+
+  if (!joinable) {
     return NextResponse.json({ error: "not_live", status }, { status: 409 });
   }
 
