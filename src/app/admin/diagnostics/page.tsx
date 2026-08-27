@@ -32,6 +32,36 @@ export default async function DiagnosticsPage() {
         whether they are present and how long they are.
       </p>
 
+      {d.migrations.some((m) => !m.present) && (
+        <section className="mb-6 rounded-lg border border-rose-500/40 bg-rose-500/10 p-5">
+          <h2 className="text-base font-bold tracking-tight text-rose-100">
+            A database migration has not been run
+          </h2>
+          <p className="mt-1 text-sm text-rose-100/80">
+            Until it is, queries that touch the missing column or table fail — which usually
+            shows up as pages that look empty, or a broadcast that saves but will not display.
+          </p>
+          <ul className="mt-3 flex flex-col gap-3">
+            {d.migrations
+              .filter((m) => !m.present)
+              .map((m) => (
+                <li key={m.migration} className="text-sm">
+                  <p className="font-mono font-semibold text-rose-100">
+                    supabase/migrations/{m.migration}
+                  </p>
+                  <p className="text-rose-100/80">Adds: {m.what}</p>
+                  {m.detail && (
+                    <p className="mt-1 font-mono text-xs text-rose-200/70">{m.detail}</p>
+                  )}
+                </li>
+              ))}
+          </ul>
+          <p className="mt-4 text-sm text-rose-100/80">
+            Run it in the Supabase SQL editor, oldest first, then reload this page.
+          </p>
+        </section>
+      )}
+
       {d.warnings.length > 0 && (
         <section className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-5">
           <h2 className="text-base font-bold tracking-tight text-amber-100">
@@ -160,6 +190,22 @@ export default async function DiagnosticsPage() {
                 }
               />
             </div>
+          </Card>
+
+          <Card title="Migrations" description="Schema features each migration adds.">
+            <ul className="flex flex-col gap-2">
+              {d.migrations.map((m) => (
+                <li
+                  key={m.migration}
+                  className="flex flex-wrap items-baseline justify-between gap-2 text-sm"
+                >
+                  <span className="font-mono text-xs text-ink-300">{m.migration}</span>
+                  <span className={m.present ? "text-ink-300" : "text-rose-300"}>
+                    <Mark ok={m.present} /> {m.present ? "applied" : "not applied"}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </Card>
 
           <Card

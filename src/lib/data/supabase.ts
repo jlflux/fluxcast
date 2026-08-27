@@ -128,9 +128,26 @@ function toView(row: JoinedBroadcastRow): BroadcastView | null {
   };
 }
 
+/**
+ * Turn a Postgres error into something an operator can act on.
+ *
+ * A missing column or table almost always means a migration in
+ * `supabase/migrations/` has not been run against this project. Reported as
+ * "query failed", that costs an hour; named, it costs a minute.
+ */
+export function describeDbError(error: { message: string; code?: string }): string {
+  if (error.code === "42703" || /column .* does not exist/i.test(error.message)) {
+    return `${error.message} — a database migration has not been run. Apply the files in supabase/migrations/ (newest last) in the Supabase SQL editor.`;
+  }
+  if (error.code === "42P01" || /relation .* does not exist/i.test(error.message)) {
+    return `${error.message} — that table does not exist. Apply the files in supabase/migrations/ in the Supabase SQL editor.`;
+  }
+  return error.message;
+}
+
 /** Supabase errors are logged server-side; callers get an empty result. */
-function logQueryError(context: string, error: { message: string }): void {
-  console.error(`[fluxcast] Supabase query failed (${context}): ${error.message}`);
+function logQueryError(context: string, error: { message: string; code?: string }): void {
+  console.error(`[fluxcast] Supabase query failed (${context}): ${describeDbError(error)}`);
 }
 
 export class SupabaseDataSource implements DataSource {
@@ -299,7 +316,22 @@ export class SupabaseDataSource implements DataSource {
       );
     }
 
-    const view = await this.getBroadcastById(broadcast.id);
+    // Read it back through the same path the UI uses. A failure here is almost
+    // always a pending migration, so say that rather than "could not be read".
+    const { data: readBack, error: readError } = await admin
+      .from("broadcasts")
+      .select(BROADCAST_SELECT)
+      .eq("id", broadcast.id)
+      .maybeSingle()
+      .returns<JoinedBroadcastRow | null>();
+
+    if (readError) {
+      throw new Error(
+        `The broadcast was saved, but FluxCast cannot display it: ${describeDbError(readError)}`,
+      );
+    }
+
+    const view = readBack ? toView(readBack) : null;
     if (!view) throw new Error("The broadcast was saved but could not be read back.");
     return view;
   }

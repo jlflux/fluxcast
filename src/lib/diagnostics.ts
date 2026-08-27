@@ -46,6 +46,14 @@ export interface ConnResult {
   detail: string | null;
 }
 
+/** A schema feature a migration is responsible for. */
+export interface MigrationCheck {
+  migration: string;
+  what: string;
+  present: boolean;
+  detail: string | null;
+}
+
 export interface TableCheck {
   table: string;
   count: number | null;
@@ -77,6 +85,7 @@ export interface Diagnostics {
   /** Set when the configured Supabase URL was trimmed to its origin. */
   urlNormalisedFrom: string | null;
   tables: TableCheck[];
+  migrations: MigrationCheck[];
   deployment: { label: string; value: string }[];
 }
 
@@ -109,6 +118,48 @@ function check(
 
 const SEEDED_TABLES = ["schools", "sports", "teams", "events", "broadcasts"] as const;
 
+/**
+ * Probe the schema features later migrations add.
+ *
+ * Running the app against a database that is missing one of these fails in
+ * confusing ways — a missing column makes every broadcast query error, so the
+ * site simply looks empty. Naming the migration turns that into a one-minute
+ * fix.
+ */
+async function checkMigrations(): Promise<MigrationCheck[]> {
+  const admin = createAdminSupabaseClient();
+
+  const probes: { migration: string; what: string; run: () => Promise<string | null> }[] = [
+    {
+      migration: "0002_auth_and_roles.sql",
+      what: "profiles table (admin accounts and roles)",
+      run: async () => {
+        const { error } = await admin.from("profiles").select("id").limit(1);
+        return error?.message ?? null;
+      },
+    },
+    {
+      migration: "0003_broadcast_interruptions.sql",
+      what: "broadcasts.interrupted_at (surviving a dropped stream)",
+      run: async () => {
+        const { error } = await admin.from("broadcasts").select("interrupted_at").limit(1);
+        return error?.message ?? null;
+      },
+    },
+  ];
+
+  return Promise.all(
+    probes.map(async ({ migration, what, run }) => {
+      try {
+        const failure = await run();
+        return { migration, what, present: failure === null, detail: failure };
+      } catch (error) {
+        return { migration, what, present: false, detail: describe(error) };
+      }
+    }),
+  );
+}
+
 export async function collectDiagnostics(): Promise<Diagnostics> {
   const env: EnvCheck[] = [
     check("Supabase URL", ["SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"], serverEnv.supabaseUrl, {
@@ -137,6 +188,7 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
   let publicRead: ConnResult | null = null;
   let serviceRead: ConnResult | null = null;
   const tables: TableCheck[] = [];
+  let migrations: MigrationCheck[] = [];
   if (isSupabaseConfigured) {
     // Does the publishable key + RLS actually let a fan read data?
     try {
@@ -152,6 +204,8 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
       const admin = createAdminSupabaseClient();
       const { error } = await admin.from("schools").select("id").limit(1);
       serviceRead = connResult(error);
+
+      migrations = await checkMigrations();
 
       for (const table of SEEDED_TABLES) {
         const { count, error: countError } = await admin
@@ -189,6 +243,7 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
     reachability,
     publicRead,
     serviceRead,
+    migrations,
     warnings: configWarnings(),
     urlNormalisedFrom:
       rawSupabaseUrl && rawSupabaseUrl.trim() !== serverEnv.supabaseUrl

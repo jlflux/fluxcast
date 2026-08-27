@@ -326,6 +326,10 @@ Other causes it will identify for you:
 | Probe returns 404 | Reached a server, but not a Supabase API — usually a URL with a leftover path |
 | Either read shows code `42P01` | Table doesn't exist — the migration hasn't run *in this project* |
 | All tables `0 rows` | Migration ran, seed didn't — run `supabase/seed.sql` |
+| **A database migration has not been run** banner | Exactly what it says — the named file has not been applied. A missing column makes every query touching it fail, which shows up as empty pages or "the broadcast was saved but could not be displayed" |
+
+The **Migrations** card lists each migration and whether its schema is present,
+so a half-applied database is visible before it breaks something.
 
 A **Likely configuration problems** panel appears above everything when a value
 looks malformed — a dashboard URL pasted instead of the API URL, a Postgres
@@ -353,6 +357,10 @@ is enough:
 3. Paste `supabase/migrations/0002_auth_and_roles.sql`, run it.
 4. Paste `supabase/migrations/0003_broadcast_interruptions.sql`, run it.
 5. Paste `supabase/seed.sql`, run it.
+
+Apply them oldest first, and apply **all** of them: the app queries columns the
+later migrations add, so a database missing one fails on every broadcast query.
+`/admin/diagnostics` names any migration that has not been applied.
 
 Both are safe to re-run. Re-running `seed.sql` also **repairs** the four sample
 games' kickoff times, locations and statuses, so it is the fix if the sample
