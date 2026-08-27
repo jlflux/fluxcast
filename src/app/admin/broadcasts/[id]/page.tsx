@@ -9,6 +9,7 @@ import { streamingMode } from "@/lib/env.server";
 import { formatKickoff } from "@/lib/format";
 import { STATUS_HINT } from "@/lib/livekit/status";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { LiveDuration } from "@/components/admin/LiveDuration";
 import { StreamDestination } from "@/components/admin/StreamDestination";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
 import { endBroadcastAction, reopenBroadcastAction, simulateStatusAction } from "@/actions/broadcasts";
@@ -67,6 +68,8 @@ export default async function AdminBroadcastPage({
             ? "The encoder disconnected. The broadcast is waiting for it to come back — reconnect OBS with the same stream URL and key and it resumes automatically."
             : STATUS_HINT[status]}
         </p>
+        <LiveDuration startedAt={broadcast.startedAt} endedAt={broadcast.endedAt} showWarning />
+
         <div className="mt-4 flex flex-wrap items-center gap-4">
           <Link
             href={`/admin/broadcasts/${broadcast.id}/edit`}

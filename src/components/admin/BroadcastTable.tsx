@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { BroadcastView } from "@/lib/types";
 import { formatKickoff } from "@/lib/format";
 import { StatusPill } from "@/components/ui/StatusPill";
+import { LiveDuration } from "@/components/admin/LiveDuration";
 
 /** Conventional admin table. Collapses to stacked rows on small screens. */
 export function BroadcastTable({
@@ -45,7 +46,10 @@ export function BroadcastTable({
                 {formatKickoff(broadcast.scheduledStart)}
               </td>
               <td className="sm:px-4 sm:py-3">
-                <StatusPill status={broadcast.status} />
+                <span className="flex flex-wrap items-center gap-2">
+                  <StatusPill status={broadcast.status} />
+                  <LiveDuration startedAt={broadcast.startedAt} endedAt={broadcast.endedAt} />
+                </span>
               </td>
               <td className="sm:px-4 sm:py-3 sm:text-right">
                 <Link

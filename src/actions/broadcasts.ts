@@ -9,6 +9,7 @@ import { wallTimeToIso } from "@/lib/format";
 import { buildMatchup, buildRoomName } from "@/lib/slug";
 import { createBroadcastIngress, deleteBroadcastIngress } from "@/lib/livekit/service";
 import { streamingMode } from "@/lib/env.server";
+import { describeLiveKitError } from "@/lib/livekit/errors";
 import type { BroadcastStatus } from "@/lib/types";
 import type { CreateBroadcastState, FormResultState } from "@/actions/form-state";
 
@@ -155,39 +156,6 @@ export async function generateStreamDestinationAction(
   return { error: null, fieldErrors: {}, success: "Stream destination created." };
 }
 
-/**
- * Make a LiveKit failure actionable.
- *
- * The SDK's errors carry the useful part in different places depending on
- * whether the call was rejected by the API, by the network, or by auth, and the
- * default string is often just "fetch failed".
- */
-function describeLiveKitError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-
-  const parts = [error.message];
-  const cause = (error as { cause?: unknown }).cause;
-  if (cause instanceof Error) parts.push(cause.message);
-
-  const message = parts.filter(Boolean).join(" — ");
-
-  if (/limit|quota|exceed|too many|concurrent/i.test(message)) {
-    return `${message}. This usually means the LiveKit project's concurrent ingress limit is reached. Release the destination on a finished broadcast to free one, or raise the limit in LiveKit Cloud.`;
-  }
-  if (/unauthorized|invalid api key|401|permission/i.test(message)) {
-    return `${message}. Check LIVEKIT_API_KEY and LIVEKIT_API_SECRET — a key from a different project will fail this way.`;
-  }
-  if (/not found|404/i.test(message)) {
-    return `${message}. Check LIVEKIT_URL points at this project.`;
-  }
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED|timeout/i.test(message)) {
-    return `${message}. FluxCast could not reach LiveKit at all — check LIVEKIT_URL.`;
-  }
-  if (/ingress/i.test(message) && /enabled|disabled|not available/i.test(message)) {
-    return `${message}. Ingress may not be enabled on this LiveKit project.`;
-  }
-  return message;
-}
 
 /**
  * Release a broadcast's LiveKit ingress.

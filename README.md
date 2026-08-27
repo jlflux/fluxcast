@@ -511,12 +511,28 @@ API key and secret.
 Releasing is deliberately manual rather than automatic on End: a broadcast can
 be reopened, and the same stream key still works if its destination is intact.
 
+**Two different LiveKit limits get confused easily**, because both report
+"exceeded":
+
+| | What it means | What fixes it |
+|---|---|---|
+| Concurrent ingress limit | Too many destinations exist at once | Release one |
+| Ingress minutes / bandwidth | The plan's usage allowance is spent | Nothing in FluxCast. Wait for the reset or upgrade |
+
+Minutes accrue for as long as an encoder stays connected, whether or not anyone
+is listening. An encoder left running overnight will spend a month's allowance.
+The admin dashboard and broadcast page show how long a broadcast has been on
+air, and flag anything past five hours — longer than any game, and almost always
+something nobody stopped.
+
 | Symptom | Likely cause |
 |---|---|
 | Status stays `Ready` | Encoder isn't connecting. Re-check the URL and key; some encoders need the key pasted with no trailing space. |
 | Went `Live`, now `Ready` again | The encoder dropped out. Reconnect OBS with the same URL and key — it resumes on its own. |
 | Status goes to `Error` | LiveKit rejected the *stream*. Check your encoder's audio codec (AAC) and that video isn't being sent at an unsupported resolution. Failing to *create* a destination is a different thing and reports its own reason on the broadcast page. |
-| "LiveKit would not create the stream destination" | Read the rest of that message. Most often the project's concurrent ingress limit is reached — release a finished broadcast's destination. |
+| "LiveKit would not create the stream destination" | Read the rest of that message — it distinguishes the two limits below. |
+| …"ingress minutes exceeded" / bandwidth | A **usage allowance** on the LiveKit plan is spent. Releasing a destination does **not** help. Wait for the billing period to reset, or upgrade. |
+| …"concurrent ingress limit reached" | Too many destinations exist **at once**. Release one from a finished broadcast. |
 | Fan sees "couldn't connect" | Open the browser console — the underlying error is logged there. Fans only ever see plain language. |
 | Nothing plays on iPhone | Audio must start from a tap. Make sure you're tapping LISTEN LIVE rather than expecting autoplay. |
 
