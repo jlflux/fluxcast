@@ -124,6 +124,45 @@ export default async function DiagnosticsPage() {
         <EnvList checks={supabaseVars} />
       </Card>
 
+      {d.livekit && (
+        <Card
+          title="LiveKit stream destinations"
+          description="LiveKit caps how many can exist at once. An untracked one is holding a slot for a broadcast FluxCast no longer has."
+        >
+          {d.livekit.ok ? (
+            d.livekit.ingresses.length === 0 ? (
+              <p className="text-sm text-ink-400">None. All slots are free.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {d.livekit.ingresses.map((i) => (
+                  <li
+                    key={i.ingressId}
+                    className="flex flex-wrap items-baseline justify-between gap-2 text-sm"
+                  >
+                    <span className="text-ink-200">{i.name || i.roomName || i.ingressId}</span>
+                    <span
+                      className={i.tracked ? "text-xs text-ink-400" : "text-xs text-amber-300"}
+                    >
+                      {i.tracked ? "in use by a broadcast" : "orphaned — safe to release"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : (
+            <p className="rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 font-mono text-xs text-rose-100">
+              {d.livekit.error}
+            </p>
+          )}
+          {d.livekit.ok && d.livekit.ingresses.length > 0 && (
+            <p className="mt-4 text-xs text-ink-400">
+              Release one from its broadcast page when the game is over. That frees a slot for
+              the next broadcast.
+            </p>
+          )}
+        </Card>
+      )}
+
       <Card
         title="LiveKit variables"
         description="All three must be present for real stream destinations."

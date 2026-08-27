@@ -11,6 +11,7 @@ import {
 } from "@/lib/env.server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { listAllIngresses } from "@/lib/livekit/service";
 
 /**
  * Configuration self-check.
@@ -86,6 +87,12 @@ export interface Diagnostics {
   urlNormalisedFrom: string | null;
   tables: TableCheck[];
   migrations: MigrationCheck[];
+  /** LiveKit ingresses currently held, and whether FluxCast still tracks each. */
+  livekit: {
+    ok: boolean;
+    error: string | null;
+    ingresses: { ingressId: string; name: string; roomName: string; tracked: boolean }[];
+  } | null;
   deployment: { label: string; value: string }[];
 }
 
@@ -158,6 +165,44 @@ async function checkMigrations(): Promise<MigrationCheck[]> {
       }
     }),
   );
+}
+
+/**
+ * List the LiveKit ingresses this project holds.
+ *
+ * Doubles as a credentials check: the call is only possible with a working
+ * key and secret, so a failure here explains a "could not create the stream
+ * destination" before anyone hits it.
+ */
+async function checkLiveKit(): Promise<Diagnostics["livekit"]> {
+  if (!isLiveKitConfigured) return null;
+  try {
+    const ingresses = await listAllIngresses();
+
+    // Which of them does FluxCast still have a broadcast for? Anything else is
+    // occupying a slot for nothing.
+    let tracked = new Set<string>();
+    if (isSupabaseConfigured) {
+      const admin = createAdminSupabaseClient();
+      const { data } = await admin
+        .from("broadcasts")
+        .select("livekit_ingress_id")
+        .not("livekit_ingress_id", "is", null);
+      tracked = new Set(
+        (data ?? [])
+          .map((row) => row.livekit_ingress_id)
+          .filter((id): id is string => typeof id === "string"),
+      );
+    }
+
+    return {
+      ok: true,
+      error: null,
+      ingresses: ingresses.map((i) => ({ ...i, tracked: tracked.has(i.ingressId) })),
+    };
+  } catch (error) {
+    return { ok: false, error: describe(error), ingresses: [] };
+  }
 }
 
 export async function collectDiagnostics(): Promise<Diagnostics> {
@@ -244,6 +289,7 @@ export async function collectDiagnostics(): Promise<Diagnostics> {
     publicRead,
     serviceRead,
     migrations,
+    livekit: await checkLiveKit(),
     warnings: configWarnings(),
     urlNormalisedFrom:
       rawSupabaseUrl && rawSupabaseUrl.trim() !== serverEnv.supabaseUrl

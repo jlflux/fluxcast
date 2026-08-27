@@ -492,11 +492,31 @@ encoder) would be cheaper still. Not needed for the prototype.
 
 **Troubleshooting**
 
+### Stream destinations are a limited resource
+
+FluxCast creates one LiveKit ingress per broadcast, and **LiveKit caps how many
+can exist at once** — as low as 2 on entry-level projects. Nothing reclaims them
+automatically, so a handful of test broadcasts will exhaust the quota and
+"Generate stream destination" starts failing.
+
+Each broadcast page has a **Release destination** button. Use it once a game is
+over: it deletes the LiveKit ingress and frees a slot. The stream URL and key
+stop working immediately, so do not release one mid-game.
+
+`/admin/diagnostics` lists every ingress the project holds and flags any that no
+broadcast points at any more — those are pure waste and safe to release. That
+listing doubles as a credentials check, since it is only possible with a working
+API key and secret.
+
+Releasing is deliberately manual rather than automatic on End: a broadcast can
+be reopened, and the same stream key still works if its destination is intact.
+
 | Symptom | Likely cause |
 |---|---|
 | Status stays `Ready` | Encoder isn't connecting. Re-check the URL and key; some encoders need the key pasted with no trailing space. |
 | Went `Live`, now `Ready` again | The encoder dropped out. Reconnect OBS with the same URL and key — it resumes on its own. |
-| Status goes to `Error` | LiveKit rejected the stream. Check your encoder's audio codec (AAC) and that video isn't being sent at an unsupported resolution. |
+| Status goes to `Error` | LiveKit rejected the *stream*. Check your encoder's audio codec (AAC) and that video isn't being sent at an unsupported resolution. Failing to *create* a destination is a different thing and reports its own reason on the broadcast page. |
+| "LiveKit would not create the stream destination" | Read the rest of that message. Most often the project's concurrent ingress limit is reached — release a finished broadcast's destination. |
 | Fan sees "couldn't connect" | Open the browser console — the underlying error is logged there. Fans only ever see plain language. |
 | Nothing plays on iPhone | Audio must start from a tap. Make sure you're tapping LISTEN LIVE rather than expecting autoplay. |
 

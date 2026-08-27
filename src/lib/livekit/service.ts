@@ -143,6 +143,24 @@ export async function getIngressSignal(ingressId: string): Promise<IngressSignal
   return readIngressSignal(info.state?.status);
 }
 
+/**
+ * Every ingress on the LiveKit project.
+ *
+ * LiveKit caps how many can exist at once, so this is what makes the quota
+ * visible before it blocks an operator mid-setup.
+ */
+export async function listAllIngresses(): Promise<
+  { ingressId: string; name: string; roomName: string }[]
+> {
+  if (!isLiveKitConfigured) return [];
+  const all = await ingressClient().listIngress({});
+  return all.map((info) => ({
+    ingressId: info.ingressId,
+    name: info.name,
+    roomName: info.roomName,
+  }));
+}
+
 /** Remove an ingress. Used when a broadcast is deleted or regenerated. */
 export async function deleteBroadcastIngress(ingressId: string): Promise<void> {
   if (!isLiveKitConfigured) return;

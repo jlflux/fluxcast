@@ -7,7 +7,7 @@ import { canManageSchool, requireAdmin, requireSuperAdmin } from "@/lib/auth";
 import { getDataSource } from "@/lib/data";
 import { wallTimeToIso } from "@/lib/format";
 import { buildMatchup, buildRoomName } from "@/lib/slug";
-import { createBroadcastIngress } from "@/lib/livekit/service";
+import { createBroadcastIngress, deleteBroadcastIngress } from "@/lib/livekit/service";
 import { streamingMode } from "@/lib/env.server";
 import type { BroadcastStatus } from "@/lib/types";
 import type { CreateBroadcastState, FormResultState } from "@/actions/form-state";
@@ -98,19 +98,30 @@ export async function createBroadcastAction(
  * (non-secret) RTMP URL. The stream key is deliberately not saved — it is
  * fetched back from LiveKit whenever an admin views it.
  */
-export async function generateStreamDestinationAction(formData: FormData): Promise<void> {
+export async function generateStreamDestinationAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
   const session = await requireAdmin();
 
   const broadcastId = text(formData, "broadcastId");
-  if (!broadcastId) return;
+  if (!broadcastId) {
+    return { error: "Missing broadcast.", fieldErrors: {}, success: null };
+  }
 
   const data = getDataSource();
   const broadcast = await data.getBroadcastById(broadcastId);
-  if (!broadcast) return;
-  if (!canManageSchool(session, broadcast.school.id)) return;
+  if (!broadcast) {
+    return { error: "That broadcast no longer exists.", fieldErrors: {}, success: null };
+  }
+  if (!canManageSchool(session, broadcast.school.id)) {
+    return { error: "You do not have access to that school.", fieldErrors: {}, success: null };
+  }
 
   // Already has a destination — don't orphan an ingress by making a second one.
-  if (broadcast.livekitIngressId) return;
+  if (broadcast.livekitIngressId) {
+    return { error: null, fieldErrors: {}, success: "This broadcast already has a destination." };
+  }
 
   const roomName = buildRoomName(broadcast.slug);
 
@@ -128,11 +139,113 @@ export async function generateStreamDestinationAction(formData: FormData): Promi
     });
   } catch (error) {
     console.error("[fluxcast] createBroadcastIngress failed", error);
-    await data.updateBroadcast(broadcast.id, { status: "error" });
+
+    // NOT status 'error'. That means "the stream errored", and its hint tells
+    // the operator to check their encoder — there is no encoder yet. Failing to
+    // provision leaves the broadcast exactly as it was, ready to retry.
+    return {
+      error: `LiveKit would not create the stream destination: ${describeLiveKitError(error)}`,
+      fieldErrors: {},
+      success: null,
+    };
   }
 
   revalidatePath(`/admin/broadcasts/${broadcastId}`);
   revalidatePath("/admin");
+  return { error: null, fieldErrors: {}, success: "Stream destination created." };
+}
+
+/**
+ * Make a LiveKit failure actionable.
+ *
+ * The SDK's errors carry the useful part in different places depending on
+ * whether the call was rejected by the API, by the network, or by auth, and the
+ * default string is often just "fetch failed".
+ */
+function describeLiveKitError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const parts = [error.message];
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) parts.push(cause.message);
+
+  const message = parts.filter(Boolean).join(" — ");
+
+  if (/limit|quota|exceed|too many|concurrent/i.test(message)) {
+    return `${message}. This usually means the LiveKit project's concurrent ingress limit is reached. Release the destination on a finished broadcast to free one, or raise the limit in LiveKit Cloud.`;
+  }
+  if (/unauthorized|invalid api key|401|permission/i.test(message)) {
+    return `${message}. Check LIVEKIT_API_KEY and LIVEKIT_API_SECRET — a key from a different project will fail this way.`;
+  }
+  if (/not found|404/i.test(message)) {
+    return `${message}. Check LIVEKIT_URL points at this project.`;
+  }
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|timeout/i.test(message)) {
+    return `${message}. FluxCast could not reach LiveKit at all — check LIVEKIT_URL.`;
+  }
+  if (/ingress/i.test(message) && /enabled|disabled|not available/i.test(message)) {
+    return `${message}. Ingress may not be enabled on this LiveKit project.`;
+  }
+  return message;
+}
+
+/**
+ * Release a broadcast's LiveKit ingress.
+ *
+ * LiveKit projects cap how many ingresses can exist at once, and FluxCast
+ * creates one per broadcast. Without a way to hand them back, a handful of test
+ * broadcasts exhausts the quota and no new destination can be created.
+ *
+ * Releasing invalidates that stream URL and key. Generating again mints a new
+ * pair, so anything already pasted into OBS stops working.
+ */
+export async function releaseStreamDestinationAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  const session = await requireAdmin();
+
+  const broadcastId = text(formData, "broadcastId");
+  if (!broadcastId) {
+    return { error: "Missing broadcast.", fieldErrors: {}, success: null };
+  }
+
+  const data = getDataSource();
+  const broadcast = await data.getBroadcastById(broadcastId);
+  if (!broadcast) {
+    return { error: "That broadcast no longer exists.", fieldErrors: {}, success: null };
+  }
+  if (!canManageSchool(session, broadcast.school.id)) {
+    return { error: "You do not have access to that school.", fieldErrors: {}, success: null };
+  }
+  if (!broadcast.livekitIngressId) {
+    return { error: null, fieldErrors: {}, success: "There was no destination to release." };
+  }
+
+  try {
+    await deleteBroadcastIngress(broadcast.livekitIngressId);
+  } catch (error) {
+    console.error("[fluxcast] deleteBroadcastIngress failed", error);
+    // Clear our side anyway: a LiveKit ingress we cannot delete is still not
+    // one this broadcast should keep pointing at.
+    console.warn(`[fluxcast] Clearing ingress ${broadcast.livekitIngressId} locally regardless.`);
+  }
+
+  await data.updateBroadcast(broadcast.id, {
+    status: broadcast.status === "ended" ? "ended" : "draft",
+    livekitIngressId: null,
+    livekitRoomName: null,
+    streamUrl: null,
+    interruptedAt: null,
+  });
+
+  revalidatePath(`/admin/broadcasts/${broadcastId}`);
+  revalidatePath("/admin");
+  return {
+    error: null,
+    fieldErrors: {},
+    success: "Destination released. That stream URL and key no longer work.",
+  };
 }
 
 /**

@@ -11,12 +11,11 @@ import { STATUS_HINT } from "@/lib/livekit/status";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { StreamDestination } from "@/components/admin/StreamDestination";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
+import { endBroadcastAction, reopenBroadcastAction, simulateStatusAction } from "@/actions/broadcasts";
 import {
-  endBroadcastAction,
-  generateStreamDestinationAction,
-  reopenBroadcastAction,
-  simulateStatusAction,
-} from "@/actions/broadcasts";
+  GenerateDestinationButton,
+  ReleaseDestinationButton,
+} from "@/components/admin/StreamDestinationControls";
 import { isInterrupted } from "@/lib/types";
 
 export default async function AdminBroadcastPage({
@@ -108,7 +107,12 @@ export default async function AdminBroadcastPage({
       </header>
 
       {credentials ? (
-        <StreamDestination credentials={credentials} />
+        <>
+          <StreamDestination credentials={credentials} />
+          <div className="rounded-lg border border-ink-800 bg-ink-900 px-5 pb-5">
+            <ReleaseDestinationButton broadcastId={broadcast.id} />
+          </div>
+        </>
       ) : (
         <div className="rounded-lg border border-ink-800 bg-ink-900 p-5">
           <h2 className="text-base font-bold tracking-tight text-ink-100">
@@ -120,15 +124,7 @@ export default async function AdminBroadcastPage({
               : "Generate an RTMP destination, then point OBS or Restream at it."}
           </p>
           {!broadcast.livekitIngressId && (
-            <form action={generateStreamDestinationAction}>
-              <input type="hidden" name="broadcastId" value={broadcast.id} />
-              <button
-                type="submit"
-                className="rounded-md bg-flux-400 px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-ink-950 transition hover:bg-flux-300"
-              >
-                Generate stream destination
-              </button>
-            </form>
+            <GenerateDestinationButton broadcastId={broadcast.id} />
           )}
         </div>
       )}
