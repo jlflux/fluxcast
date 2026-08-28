@@ -646,6 +646,25 @@ page — its ingress is left in place, so the same stream key still works.
 The state machine lives in `decideStatus()`, split out from the I/O so it can
 be reasoned about on its own.
 
+### Deleting a broadcast
+
+Each broadcast page has a delete section. It removes the broadcast and its game
+for everyone — fans included — and cannot be undone, so it takes two clicks.
+
+Two guards:
+
+- **A live broadcast cannot be deleted.** End it first. Deleting a game
+  mid-listen is not something a stray click should be able to do.
+- **The LiveKit ingress is released first.** LiveKit caps how many stream
+  destinations can exist at once, and an ingress whose broadcast no longer
+  exists is unreachable from the admin UI — it would hold a slot until someone
+  hunted it down in the LiveKit dashboard. If releasing fails, nothing is
+  deleted and the reason is shown.
+
+Deleting removes the game and any audience figures with it. To keep the numbers
+from a finished broadcast, leave it ended rather than deleting it — ended
+broadcasts do not appear in the public Live or Upcoming lists.
+
 ### Audience numbers
 
 Every broadcast page in the admin area shows how many people listened, during

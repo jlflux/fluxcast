@@ -513,6 +513,39 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
+  /**
+   * Delete a broadcast and its event.
+   *
+   * The broadcast goes first, then the event it hung off — an event with no
+   * broadcast is invisible everywhere and would just accumulate. Listener
+   * sessions cascade away with the broadcast.
+   */
+  async deleteBroadcast(id: string): Promise<void> {
+    const admin = createAdminSupabaseClient();
+
+    const { data: broadcast, error: loadError } = await admin
+      .from("broadcasts")
+      .select("id, event_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (loadError) throw new Error(`Could not load the broadcast: ${describeDbError(loadError)}`);
+    if (!broadcast) return;
+
+    const { error: broadcastError } = await admin.from("broadcasts").delete().eq("id", id);
+    if (broadcastError) {
+      throw new Error(`Could not delete the broadcast: ${describeDbError(broadcastError)}`);
+    }
+
+    const { error: eventError } = await admin
+      .from("events")
+      .delete()
+      .eq("id", broadcast.event_id);
+    if (eventError) {
+      // The broadcast is already gone, which is what the operator asked for.
+      console.error(`[fluxcast] Orphaned event ${broadcast.event_id}: ${eventError.message}`);
+    }
+  }
+
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {
     const admin = createAdminSupabaseClient();
     const { error } = await admin

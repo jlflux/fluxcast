@@ -478,3 +478,74 @@ export async function reopenBroadcastAction(formData: FormData): Promise<void> {
   revalidatePath("/");
   revalidatePath(`/broadcasts/${broadcast.slug}`);
 }
+
+
+/**
+ * Delete a broadcast and its game, permanently.
+ *
+ * Two guards, both learned the hard way:
+ *
+ *   - A live broadcast cannot be deleted. Pulling a game out from under people
+ *     mid-listen is not something a stray click should be able to do; end it
+ *     first, deliberately.
+ *   - The LiveKit ingress is released first. LiveKit caps how many can exist at
+ *     once, and an ingress whose broadcast no longer exists is unreachable
+ *     through the UI — it would hold a slot until someone found it in the
+ *     LiveKit dashboard.
+ */
+export async function deleteBroadcastAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  const session = await requireAdmin();
+
+  const broadcastId = text(formData, "broadcastId");
+  if (!broadcastId) {
+    return { error: "Missing broadcast.", fieldErrors: {}, success: null };
+  }
+
+  const data = getDataSource();
+  const broadcast = await data.getBroadcastById(broadcastId);
+  if (!broadcast) {
+    return { error: "That broadcast no longer exists.", fieldErrors: {}, success: null };
+  }
+  if (!canManageSchool(session, broadcast.school.id)) {
+    return { error: "You do not have access to that school.", fieldErrors: {}, success: null };
+  }
+  if (broadcast.status === "live") {
+    return {
+      error: "This broadcast is live. End it first, then delete it.",
+      fieldErrors: {},
+      success: null,
+    };
+  }
+
+  if (broadcast.livekitIngressId) {
+    try {
+      await deleteBroadcastIngress(broadcast.livekitIngressId);
+    } catch (error) {
+      console.error("[fluxcast] Could not release ingress before delete", error);
+      return {
+        error: `Could not release this broadcast's stream destination, so nothing was deleted: ${describeLiveKitError(error)}. Release it separately, then delete.`,
+        fieldErrors: {},
+        success: null,
+      };
+    }
+  }
+
+  try {
+    await data.deleteBroadcast(broadcast.id);
+  } catch (error) {
+    console.error("[fluxcast] deleteBroadcast failed", error);
+    return {
+      error: error instanceof Error ? error.message : "Could not delete that broadcast.",
+      fieldErrors: {},
+      success: null,
+    };
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/schools/${broadcast.school.slug}`);
+  redirect("/admin?deleted=1");
+}

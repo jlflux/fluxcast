@@ -465,6 +465,15 @@ export class MockDataSource implements DataSource {
       .map(({ firstSeen, lastSeen }) => ({ firstSeen, lastSeen }));
   }
 
+  async deleteBroadcast(id: string): Promise<void> {
+    const db = store();
+    const index = db.broadcasts.findIndex((b) => b.id === id);
+    if (index === -1) return;
+    const [removed] = db.broadcasts.splice(index, 1);
+    db.events = db.events.filter((e) => e.id !== removed.eventId);
+    db.listenerSessions = db.listenerSessions.filter((s) => s.broadcastId !== id);
+  }
+
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {
     const db = store();
     const broadcast = db.broadcasts.find((b) => b.id === id);

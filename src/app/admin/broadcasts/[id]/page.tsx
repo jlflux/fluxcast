@@ -11,6 +11,7 @@ import { STATUS_HINT } from "@/lib/livekit/status";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDuration } from "@/components/admin/LiveDuration";
 import { AudienceReport } from "@/components/admin/AudienceReport";
+import { DeleteBroadcast } from "@/components/admin/DeleteBroadcast";
 import { computeListenerStats } from "@/lib/listeners";
 import { StreamDestination } from "@/components/admin/StreamDestination";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
@@ -139,6 +140,13 @@ export default async function AdminBroadcastPage({
       )}
 
       <AudienceReport stats={listenerStats} live={status === "live" || interrupted} />
+
+      <DeleteBroadcast
+        broadcastId={broadcast.id}
+        matchup={broadcast.matchup}
+        isLive={status === "live"}
+        hasDestination={Boolean(broadcast.livekitIngressId)}
+      />
 
       {streamingMode === "mock" && (
         <section className="mt-8 rounded-lg border border-amber-500/25 bg-amber-500/5 p-5">

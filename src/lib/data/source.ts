@@ -76,4 +76,10 @@ export interface DataSource {
 
   /** Listening windows for a broadcast, for the audience report. */
   listListenerSessions(broadcastId: string): Promise<ListenerSessionWindow[]>;
+
+  /**
+   * Remove a broadcast and the game it belongs to. Permanent.
+   * The caller is responsible for releasing the LiveKit ingress first.
+   */
+  deleteBroadcast(id: string): Promise<void>;
 }
