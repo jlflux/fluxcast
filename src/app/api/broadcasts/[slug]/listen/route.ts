@@ -21,8 +21,19 @@ import { isInterrupted } from "@/lib/types";
  *
  * POST rather than GET so it is never cached by a browser or CDN.
  */
-export async function POST(_request: Request, { params }: RouteContext<"/api/broadcasts/[slug]/listen">) {
+export async function POST(request: Request, { params }: RouteContext<"/api/broadcasts/[slug]/listen">) {
   const { slug } = await params;
+
+  // Opaque per-device key so reconnects do not each count as a new listener.
+  let listenerKey: string | null = null;
+  try {
+    const body = (await request.json()) as { listenerKey?: unknown };
+    if (typeof body.listenerKey === "string" && body.listenerKey.length <= 100) {
+      listenerKey = body.listenerKey;
+    }
+  } catch {
+    // No body, or not JSON. Listening still works; it just is not counted.
+  }
 
   const broadcast = await getDataSource().getBroadcastBySlug(slug);
   if (!broadcast) {
@@ -39,6 +50,10 @@ export async function POST(_request: Request, { params }: RouteContext<"/api/bro
 
   if (!joinable) {
     return NextResponse.json({ error: "not_live", status }, { status: 409 });
+  }
+
+  if (listenerKey) {
+    await getDataSource().recordListenerSeen(broadcast.id, listenerKey);
   }
 
   if (streamingMode === "mock") {

@@ -12,6 +12,7 @@ import type {
 } from "@/lib/types";
 import { buildBroadcastSlug, buildMatchup, slugify } from "@/lib/slug";
 import type { BroadcastPatch, DataSource, TeamOption } from "@/lib/data/source";
+import type { ListenerSessionWindow } from "@/lib/listeners";
 
 /**
  * In-memory data source used when Supabase is not configured.
@@ -68,12 +69,20 @@ function minutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
+interface MockListenerSession {
+  broadcastId: string;
+  listenerKey: string;
+  firstSeen: string;
+  lastSeen: string;
+}
+
 interface MockStore {
   schools: School[];
   sports: Sport[];
   teams: Team[];
   events: GameEvent[];
   broadcasts: Broadcast[];
+  listenerSessions: MockListenerSession[];
   sequence: number;
 }
 
@@ -194,6 +203,7 @@ function seed(): MockStore {
     teams: [VARSITY_FOOTBALL],
     events,
     broadcasts,
+    listenerSessions: [],
     sequence: 1,
   };
 }
@@ -434,6 +444,25 @@ export class MockDataSource implements DataSource {
       level: team.level,
       label: `${school.shortName} ${team.level} ${sport.name}`,
     };
+  }
+
+  async recordListenerSeen(broadcastId: string, listenerKey: string): Promise<void> {
+    const db = store();
+    const now = new Date().toISOString();
+    const existing = db.listenerSessions.find(
+      (s) => s.broadcastId === broadcastId && s.listenerKey === listenerKey,
+    );
+    if (existing) {
+      existing.lastSeen = now;
+      return;
+    }
+    db.listenerSessions.push({ broadcastId, listenerKey, firstSeen: now, lastSeen: now });
+  }
+
+  async listListenerSessions(broadcastId: string): Promise<ListenerSessionWindow[]> {
+    return store()
+      .listenerSessions.filter((s) => s.broadcastId === broadcastId)
+      .map(({ firstSeen, lastSeen }) => ({ firstSeen, lastSeen }));
   }
 
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {

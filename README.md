@@ -346,6 +346,7 @@ SQL lives in `supabase/`:
   policies that scope each school's admin to their own data
 - `migrations/0003_broadcast_interruptions.sql` — lets a broadcast survive a
   dropped encoder instead of ending
+- `migrations/0004_listener_sessions.sql` — audience numbers per broadcast
 - `seed.sql` — Homewood High School, Football, Varsity Football, and four
   sample games
 
@@ -356,7 +357,8 @@ is enough:
 2. Paste `supabase/migrations/0001_init.sql`, run it.
 3. Paste `supabase/migrations/0002_auth_and_roles.sql`, run it.
 4. Paste `supabase/migrations/0003_broadcast_interruptions.sql`, run it.
-5. Paste `supabase/seed.sql`, run it.
+5. Paste `supabase/migrations/0004_listener_sessions.sql`, run it.
+6. Paste `supabase/seed.sql`, run it.
 
 Apply them oldest first, and apply **all** of them: the app queries columns the
 later migrations add, so a database missing one fails on every broadcast query.
@@ -643,6 +645,35 @@ page — its ingress is left in place, so the same stream key still works.
 
 The state machine lives in `decideStatus()`, split out from the I/O so it can
 be reasoned about on its own.
+
+### Audience numbers
+
+Every broadcast page in the admin area shows how many people listened, during
+the game and after it ends.
+
+| Figure | What it is |
+|---|---|
+| **Peak at once** | Most devices tuned in at the same moment. The closest thing to "how big was the audience", and the number worth quoting |
+| **Devices total** | Each device that pressed Listen Live. A phone and a laptop count twice; a family round one speaker counts once |
+| **Avg. listen / Longest** | How long people stayed |
+
+**Devices, not people.** FluxCast cannot know how many are gathered round a
+phone, and the labels say so rather than implying precision that is not there.
+
+How it works: the browser generates a random key per broadcast and keeps it in
+`localStorage`. It is sent when requesting a listen token and on a heartbeat
+every 30 seconds while audio is actually playing — an open tab is not an
+audience member. Reconnects and reloads reuse the key, so a fan on a flaky
+signal stays one listener instead of inflating the count tenfold.
+
+**Nothing identifying is collected**: no IP address, no user agent, no location,
+no accounts. The key is a random value that means nothing outside the
+`listener_sessions` table, and clearing site data resets it.
+
+Peak concurrency is a sweep line over each session's window, with a 30-second
+minimum so a listener seen only once still counts toward the peak. Recording is
+wrapped so it can never interrupt playback — losing a count matters far less
+than losing the game.
 
 ### Listener security
 

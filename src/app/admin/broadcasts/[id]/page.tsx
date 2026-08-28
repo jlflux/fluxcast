@@ -10,6 +10,8 @@ import { formatKickoff } from "@/lib/format";
 import { STATUS_HINT } from "@/lib/livekit/status";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDuration } from "@/components/admin/LiveDuration";
+import { AudienceReport } from "@/components/admin/AudienceReport";
+import { computeListenerStats } from "@/lib/listeners";
 import { StreamDestination } from "@/components/admin/StreamDestination";
 import { AdminRefresher } from "@/components/admin/AdminRefresher";
 import { endBroadcastAction, reopenBroadcastAction, simulateStatusAction } from "@/actions/broadcasts";
@@ -31,6 +33,10 @@ export default async function AdminBroadcastPage({
 
   const status = await syncBroadcastStatus(broadcast);
   const interrupted = isInterrupted({ ...broadcast, status });
+
+  const listenerStats = computeListenerStats(
+    await getDataSource().listListenerSessions(broadcast.id),
+  );
 
   const credentials = broadcast.livekitIngressId
     ? await getStreamCredentials(broadcast.livekitIngressId).catch((error) => {
@@ -131,6 +137,8 @@ export default async function AdminBroadcastPage({
           )}
         </div>
       )}
+
+      <AudienceReport stats={listenerStats} live={status === "live" || interrupted} />
 
       {streamingMode === "mock" && (
         <section className="mt-8 rounded-lg border border-amber-500/25 bg-amber-500/5 p-5">

@@ -101,6 +101,21 @@ export type BroadcastInsert = {
   interrupted_at?: string | null;
 };
 
+export type ListenerSessionRow = {
+  id: string;
+  broadcast_id: string;
+  listener_key: string;
+  first_seen: string;
+  last_seen: string;
+};
+
+export type ListenerSessionInsert = {
+  broadcast_id: string;
+  listener_key: string;
+  first_seen?: string;
+  last_seen?: string;
+};
+
 type Table<Row, Insert> = {
   Row: Row;
   Insert: Insert;
@@ -117,6 +132,7 @@ export interface Database {
       events: Table<EventRow, Omit<EventRow, "id" | "created_at">>;
       broadcasts: Table<BroadcastRow, BroadcastInsert>;
       profiles: Table<ProfileRow, ProfileInsert>;
+      listener_sessions: Table<ListenerSessionRow, ListenerSessionInsert>;
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

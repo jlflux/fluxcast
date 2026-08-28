@@ -1,3 +1,4 @@
+import type { ListenerSessionWindow } from "@/lib/listeners";
 import type {
   BroadcastStatus,
   BroadcastView,
@@ -65,4 +66,14 @@ export interface DataSource {
 
   createSchool(input: CreateSchoolInput): Promise<School>;
   createTeam(input: CreateTeamInput): Promise<TeamOption>;
+
+  /**
+   * Note that a device is listening. Called when a token is issued and on each
+   * status poll, so a session's window grows as long as someone is tuned in.
+   * Must never throw — losing a count is not worth interrupting playback.
+   */
+  recordListenerSeen(broadcastId: string, listenerKey: string): Promise<void>;
+
+  /** Listening windows for a broadcast, for the audience report. */
+  listListenerSessions(broadcastId: string): Promise<ListenerSessionWindow[]>;
 }

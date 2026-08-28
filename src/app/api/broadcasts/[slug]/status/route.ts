@@ -10,7 +10,7 @@ import { streamingMode } from "@/lib/env.server";
  * Public and unauthenticated — it returns nothing a fan could not already see
  * on the page. Both the listener page and the admin dashboard poll this.
  */
-export async function GET(_request: Request, { params }: RouteContext<"/api/broadcasts/[slug]/status">) {
+export async function GET(request: Request, { params }: RouteContext<"/api/broadcasts/[slug]/status">) {
   const { slug } = await params;
 
   const broadcast = await getDataSource().getBroadcastBySlug(slug);
@@ -19,6 +19,13 @@ export async function GET(_request: Request, { params }: RouteContext<"/api/broa
   }
 
   const status = await syncBroadcastStatus(broadcast);
+
+  // The player polls this while connected, which doubles as the heartbeat that
+  // keeps a listening session's window open.
+  const listenerKey = new URL(request.url).searchParams.get("lk");
+  if (listenerKey && listenerKey.length <= 100 && status === "live") {
+    await getDataSource().recordListenerSeen(broadcast.id, listenerKey);
+  }
 
   return NextResponse.json(
     { slug, status, mock: streamingMode === "mock" },

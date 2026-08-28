@@ -153,6 +153,14 @@ async function checkMigrations(): Promise<MigrationCheck[]> {
         return error?.message ?? null;
       },
     },
+    {
+      migration: "0004_listener_sessions.sql",
+      what: "listener_sessions table (audience numbers)",
+      run: async () => {
+        const { error } = await admin.from("listener_sessions").select("id").limit(1);
+        return error?.message ?? null;
+      },
+    },
   ];
 
   return Promise.all(

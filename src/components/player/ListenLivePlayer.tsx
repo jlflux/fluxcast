@@ -13,6 +13,7 @@ import {
 import type { BroadcastStatus } from "@/lib/types";
 import { LevelMeter } from "@/components/player/LevelMeter";
 import { useMediaSession } from "@/components/player/useMediaSession";
+import { getListenerKey } from "@/components/player/listenerKey";
 
 /**
  * The fan-facing audio player.
@@ -56,6 +57,9 @@ type PlayerState =
   | "error"
   | "unavailable"
   | "devmode";
+
+/** How often a listening device reports in, so its session window stays open. */
+const HEARTBEAT_MS = 30_000;
 
 const MESSAGES: Record<PlayerState, string> = {
   idle: "Tap to join the broadcast.",
@@ -148,7 +152,11 @@ export function ListenLivePlayer({
     };
 
     try {
-      const response = await fetch(`/api/broadcasts/${slug}/listen`, { method: "POST" });
+      const response = await fetch(`/api/broadcasts/${slug}/listen`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ listenerKey: getListenerKey(slug) }),
+      });
       payload = await response.json();
 
       if (!response.ok) {
@@ -299,6 +307,28 @@ export function ListenLivePlayer({
     teardown();
     setState("idle");
   }, [teardown]);
+
+  /**
+   * Keep this device's listening session open while audio is actually playing.
+   *
+   * An open tab on the page is not an audience member — only a device with
+   * sound coming out of it counts, which is why this lives here rather than in
+   * the status poller.
+   */
+  useEffect(() => {
+    if (state !== "playing") return;
+
+    const beat = () => {
+      void fetch(
+        `/api/broadcasts/${slug}/status?lk=${encodeURIComponent(getListenerKey(slug))}`,
+        { cache: "no-store" },
+      ).catch(() => undefined);
+    };
+
+    beat();
+    const timer = setInterval(beat, HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }, [state, slug]);
 
   // Put the broadcast on the phone's lock screen and notification shade.
   useMediaSession({

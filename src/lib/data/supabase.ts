@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ListenerSessionWindow } from "@/lib/listeners";
 import type {
   BroadcastStatus,
   BroadcastView,
@@ -469,6 +470,47 @@ export class SupabaseDataSource implements DataSource {
       level: row.level,
       label: `${row.school.short_name} ${row.level} ${row.sport.name}`,
     };
+  }
+
+  /**
+   * Upsert the device's session window.
+   *
+   * `first_seen` is left alone on conflict so a listener who reconnects keeps
+   * their original start; only `last_seen` moves forward.
+   */
+  async recordListenerSeen(broadcastId: string, listenerKey: string): Promise<void> {
+    try {
+      const admin = createAdminSupabaseClient();
+      const now = new Date().toISOString();
+      const { error } = await admin
+        .from("listener_sessions")
+        .upsert(
+          { broadcast_id: broadcastId, listener_key: listenerKey, last_seen: now },
+          { onConflict: "broadcast_id,listener_key" },
+        );
+      if (error) logQueryError("recordListenerSeen", error);
+    } catch (error) {
+      // Counting must never break listening.
+      console.error("[fluxcast] recordListenerSeen threw", error);
+    }
+  }
+
+  async listListenerSessions(broadcastId: string): Promise<ListenerSessionWindow[]> {
+    try {
+      const admin = createAdminSupabaseClient();
+      const { data, error } = await admin
+        .from("listener_sessions")
+        .select("first_seen, last_seen")
+        .eq("broadcast_id", broadcastId);
+      if (error) {
+        logQueryError("listListenerSessions", error);
+        return [];
+      }
+      return data.map((row) => ({ firstSeen: row.first_seen, lastSeen: row.last_seen }));
+    } catch (error) {
+      console.error("[fluxcast] listListenerSessions threw", error);
+      return [];
+    }
   }
 
   async updateBroadcast(id: string, patch: BroadcastPatch): Promise<BroadcastView | null> {
