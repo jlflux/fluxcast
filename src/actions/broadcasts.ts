@@ -7,7 +7,11 @@ import { canManageSchool, requireAdmin, requireSuperAdmin } from "@/lib/auth";
 import { getDataSource } from "@/lib/data";
 import { wallTimeToIso } from "@/lib/format";
 import { buildMatchup, buildRoomName } from "@/lib/slug";
-import { createBroadcastIngress, deleteBroadcastIngress } from "@/lib/livekit/service";
+import {
+  createBroadcastIngress,
+  deleteBroadcastIngress,
+  listAllIngresses,
+} from "@/lib/livekit/service";
 import { streamingMode } from "@/lib/env.server";
 import { describeLiveKitError } from "@/lib/livekit/errors";
 import type { BroadcastStatus } from "@/lib/types";
@@ -434,11 +438,29 @@ export async function endBroadcastAction(formData: FormData): Promise<void> {
   if (!broadcast) return;
   if (!canManageSchool(session, broadcast.school.id)) return;
 
+  // Release the ingress. LiveKit meters an ingress for as long as it exists,
+  // not for the time spent publishing, so leaving one behind bills around the
+  // clock until somebody deletes it. Keeping it was previously the default and
+  // it was an expensive mistake.
+  let releasedNote = "";
+  if (broadcast.livekitIngressId) {
+    try {
+      await deleteBroadcastIngress(broadcast.livekitIngressId);
+      releasedNote = " and released its stream destination";
+    } catch (error) {
+      console.error("[fluxcast] Could not release ingress while ending broadcast", error);
+    }
+  }
+  console.info(`[fluxcast] Ended broadcast ${broadcast.id}${releasedNote}.`);
+
   const now = new Date().toISOString();
   await data.updateBroadcast(broadcast.id, {
     status: "ended",
     endedAt: now,
     interruptedAt: null,
+    livekitIngressId: null,
+    livekitRoomName: null,
+    streamUrl: null,
     ...(broadcast.startedAt ? {} : { startedAt: now }),
   });
 
@@ -548,4 +570,95 @@ export async function deleteBroadcastAction(
   revalidatePath("/");
   revalidatePath(`/schools/${broadcast.school.slug}`);
   redirect("/admin?deleted=1");
+}
+
+/**
+ * Release every LiveKit ingress that is not currently in use.
+ *
+ * LiveKit bills an ingress for as long as it EXISTS, not for the time an
+ * encoder spends publishing to it. FluxCast created one per broadcast and left
+ * it there, so every destination ever generated has been metering 24/7 since
+ * the moment it was created — including ones belonging to broadcasts that were
+ * since deleted, which no page could reach.
+ *
+ * This sweeps the project clean. Ingresses attached to a broadcast that is live
+ * right now are skipped, so it is safe to run mid-game.
+ */
+export async function releaseIdleIngressesAction(
+  _previous: FormResultState,
+  formData: FormData,
+): Promise<FormResultState> {
+  await requireSuperAdmin();
+
+  // Server Actions accept direct POSTs, not just clicks in our UI. This is a
+  // bulk destructive action, so require the confirmation the form sends rather
+  // than acting on any request that reaches it.
+  if (text(formData, "confirm") !== "release-idle") {
+    return { error: "Not confirmed.", fieldErrors: {}, success: null };
+  }
+
+  let ingresses: Awaited<ReturnType<typeof listAllIngresses>>;
+  try {
+    ingresses = await listAllIngresses();
+  } catch (error) {
+    return {
+      error: `Could not list stream destinations: ${describeLiveKitError(error)}`,
+      fieldErrors: {},
+      success: null,
+    };
+  }
+
+  if (ingresses.length === 0) {
+    return { error: null, fieldErrors: {}, success: "No stream destinations exist." };
+  }
+
+  const data = getDataSource();
+  const broadcasts = await data.listBroadcasts();
+  const liveIngressIds = new Set(
+    broadcasts
+      .filter((b) => b.status === "live" && b.livekitIngressId)
+      .map((b) => b.livekitIngressId as string),
+  );
+
+  let released = 0;
+  let skipped = 0;
+  const failures: string[] = [];
+
+  for (const ingress of ingresses) {
+    if (liveIngressIds.has(ingress.ingressId)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      await deleteBroadcastIngress(ingress.ingressId);
+      released += 1;
+    } catch (error) {
+      console.error(`[fluxcast] Could not delete ingress ${ingress.ingressId}`, error);
+      failures.push(ingress.ingressId);
+    }
+
+    // Clear our record for whichever broadcast was pointing at it.
+    const owner = broadcasts.find((b) => b.livekitIngressId === ingress.ingressId);
+    if (owner) {
+      await data.updateBroadcast(owner.id, {
+        livekitIngressId: null,
+        livekitRoomName: null,
+        streamUrl: null,
+        ...(owner.status === "ended" ? {} : { status: "draft" }),
+      });
+    }
+  }
+
+  revalidatePath("/admin/diagnostics");
+  revalidatePath("/admin");
+
+  const parts = [`Released ${released} stream destination${released === 1 ? "" : "s"}.`];
+  if (skipped > 0) parts.push(`${skipped} skipped because a broadcast is live on it.`);
+  if (failures.length > 0) parts.push(`${failures.length} could not be deleted — see logs.`);
+
+  return {
+    error: failures.length > 0 ? parts.join(" ") : null,
+    fieldErrors: {},
+    success: failures.length > 0 ? null : parts.join(" "),
+  };
 }

@@ -167,6 +167,22 @@ export async function deleteBroadcastIngress(ingressId: string): Promise<void> {
   await ingressClient().deleteIngress(ingressId);
 }
 
+/**
+ * Is a stream destination sitting idle well ahead of its game?
+ *
+ * LiveKit meters an ingress from the moment it exists, not from the moment an
+ * encoder connects, so one generated days early bills for those days without a
+ * single listener. Lives here rather than in the component because reading the
+ * clock during render is not allowed.
+ */
+export function isDestinationGeneratedTooEarly(
+  scheduledStart: string,
+  now: number = Date.now(),
+): boolean {
+  const hoursUntil = (Date.parse(scheduledStart) - now) / 3_600_000;
+  return Number.isFinite(hoursUntil) && hoursUntil > 24;
+}
+
 // ---------------------------------------------------------------------------
 // Listener tokens
 // ---------------------------------------------------------------------------

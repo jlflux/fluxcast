@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { collectDiagnostics } from "@/lib/diagnostics";
 import type { ConnResult, EnvCheck } from "@/lib/diagnostics";
+import { ReleaseIdleIngresses } from "@/components/admin/ReleaseIdleIngresses";
 
 export const metadata = { title: "Diagnostics" };
 
@@ -127,7 +128,7 @@ export default async function DiagnosticsPage() {
       {d.livekit && (
         <Card
           title="LiveKit stream destinations"
-          description="LiveKit caps how many can exist at once. An untracked one is holding a slot for a broadcast FluxCast no longer has."
+          description="Each of these is billing for as long as it exists, whether or not anyone is streaming to it."
         >
           {d.livekit.ok ? (
             d.livekit.ingresses.length === 0 ? (
@@ -154,11 +155,8 @@ export default async function DiagnosticsPage() {
               {d.livekit.error}
             </p>
           )}
-          {d.livekit.ok && d.livekit.ingresses.length > 0 && (
-            <p className="mt-4 text-xs text-ink-400">
-              Release one from its broadcast page when the game is over. That frees a slot for
-              the next broadcast.
-            </p>
+          {d.livekit.ok && (
+            <ReleaseIdleIngresses count={d.livekit.ingresses.length} />
           )}
         </Card>
       )}

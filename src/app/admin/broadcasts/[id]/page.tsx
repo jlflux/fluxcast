@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { canManageSchool, requireAdmin } from "@/lib/auth";
 import { getDataSource } from "@/lib/data";
 import { syncBroadcastStatus } from "@/lib/livekit/sync";
-import { getStreamCredentials } from "@/lib/livekit/service";
+import { getStreamCredentials, isDestinationGeneratedTooEarly } from "@/lib/livekit/service";
 import { streamingMode } from "@/lib/env.server";
 import { formatKickoff } from "@/lib/format";
 import { STATUS_HINT } from "@/lib/livekit/status";
@@ -118,7 +118,10 @@ export default async function AdminBroadcastPage({
 
       {credentials ? (
         <>
-          <StreamDestination credentials={credentials} />
+          <StreamDestination
+            credentials={credentials}
+            generatedTooEarly={isDestinationGeneratedTooEarly(broadcast.scheduledStart)}
+          />
           <div className="rounded-lg border border-ink-800 bg-ink-900 px-5 pb-5">
             <ReleaseDestinationButton broadcastId={broadcast.id} />
           </div>

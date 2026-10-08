@@ -494,7 +494,32 @@ encoder) would be cheaper still. Not needed for the prototype.
 
 **Troubleshooting**
 
-### Stream destinations are a limited resource
+### Stream destinations cost money for every hour they exist
+
+**LiveKit meters an ingress from the moment it is created until it is deleted —
+not for the time an encoder spends publishing to it.** An idle destination
+nobody is streaming to bills around the clock.
+
+This is the single most expensive mistake available in this codebase. FluxCast
+creates one ingress per broadcast, and for a while nothing ever deleted them:
+every destination ever generated kept metering 24/7. The signature in a LiveKit
+invoice is unmistakable — enormous ingress minutes beside trivial participant
+minutes and modest data transfer.
+
+So:
+
+- **Ending a broadcast releases its destination automatically.** The stream URL
+  and key stop working; generating again mints a new pair.
+- **Generate a destination shortly before the game, not days ahead.** The
+  broadcast page warns when kickoff is more than a day away.
+- **`/admin/diagnostics` lists every destination the project holds**, with a
+  Release idle destinations button that sweeps them all — including orphans
+  belonging to deleted broadcasts, which no other page can reach. Destinations
+  carrying a live broadcast are skipped, so it is safe to run mid-game.
+
+Check that list after every broadcast. An empty list costs nothing.
+
+### Stream destinations are also a limited resource
 
 FluxCast creates one LiveKit ingress per broadcast, and **LiveKit caps how many
 can exist at once** — as low as 2 on entry-level projects. Nothing reclaims them
@@ -510,8 +535,9 @@ broadcast points at any more — those are pure waste and safe to release. That
 listing doubles as a credentials check, since it is only possible with a working
 API key and secret.
 
-Releasing is deliberately manual rather than automatic on End: a broadcast can
-be reopened, and the same stream key still works if its destination is intact.
+Releasing used to be manual on End, so a destination survived for a reopen with
+the same key. That was wrong: the saving was a few seconds of re-pasting a key,
+and the cost was metered hours. Ending now releases.
 
 **Two different LiveKit limits get confused easily**, because both report
 "exceeded":
