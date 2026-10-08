@@ -519,6 +519,19 @@ So:
 
 Check that list after every broadcast. An empty list costs nothing.
 
+When the admin UI cannot reach one — it is stuck, orphaned, or reporting
+`publishing` with no encoder attached — use the script, which talks to LiveKit
+directly:
+
+```bash
+node --env-file=.env.local scripts/ingress.mjs              # list, with states
+node --env-file=.env.local scripts/ingress.mjs --delete-all # delete every one
+```
+
+An ingress can report `publishing` long after its encoder vanished, if the
+encoder dropped without a clean disconnect. Deleting it is the only way to
+clear that state.
+
 ### Stream destinations are also a limited resource
 
 FluxCast creates one LiveKit ingress per broadcast, and **LiveKit caps how many
