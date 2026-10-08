@@ -15,7 +15,7 @@ import { emptyFormResultState } from "@/actions/form-state";
  */
 export function ReleaseIdleIngresses({ count }: { count: number }) {
   const [state, formAction] = useActionState(releaseIdleIngressesAction, emptyFormResultState);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<null | "idle" | "all">(null);
 
   if (count === 0) return null;
 
@@ -44,32 +44,54 @@ export function ReleaseIdleIngresses({ count }: { count: number }) {
         the meter; a live broadcast is skipped, and any other stream URL and key stop working.
       </p>
 
-      {!confirming ? (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          className="rounded-md border border-rose-500/40 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-rose-200 transition hover:bg-rose-500/10"
-        >
-          Release idle destinations
-        </button>
-      ) : (
-        <form action={formAction} className="flex flex-wrap items-center gap-3">
-          <input type="hidden" name="confirm" value="release-idle" />
-          <Confirm count={count} />
+      {confirming === null ? (
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => setConfirming(false)}
-            className="text-sm text-ink-400 transition hover:text-ink-200"
+            onClick={() => setConfirming("idle")}
+            className="rounded-md border border-rose-500/40 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-rose-200 transition hover:bg-rose-500/10"
           >
-            Cancel
+            Release idle destinations
           </button>
+          <button
+            type="button"
+            onClick={() => setConfirming("all")}
+            className="text-xs font-semibold text-ink-400 underline underline-offset-2 transition hover:text-ink-200"
+          >
+            Force release all {count}
+          </button>
+        </div>
+      ) : (
+        <form action={formAction} className="flex flex-col gap-3">
+          <input
+            type="hidden"
+            name="confirm"
+            value={confirming === "all" ? "release-all" : "release-idle"}
+          />
+          {confirming === "all" && (
+            <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+              This deletes all {count}, including any FluxCast still believes is live. If a game
+              really is on the air it will be cut off. A broadcast can stay marked live long
+              after it ended, so this is the right choice when nothing is actually streaming.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <Confirm count={count} force={confirming === "all"} />
+            <button
+              type="button"
+              onClick={() => setConfirming(null)}
+              className="text-sm text-ink-400 transition hover:text-ink-200"
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
     </div>
   );
 }
 
-function Confirm({ count }: { count: number }) {
+function Confirm({ count, force }: { count: number; force: boolean }) {
   const { pending } = useFormStatus();
   return (
     <button
@@ -77,7 +99,7 @@ function Confirm({ count }: { count: number }) {
       disabled={pending}
       className="rounded-md bg-rose-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition hover:bg-rose-400 disabled:opacity-60"
     >
-      {pending ? "Releasing…" : `Yes, release all ${count} idle`}
+      {pending ? "Releasing…" : force ? `Yes, force release all ${count}` : `Yes, release idle`}
     </button>
   );
 }

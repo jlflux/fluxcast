@@ -593,9 +593,21 @@ export async function releaseIdleIngressesAction(
   // Server Actions accept direct POSTs, not just clicks in our UI. This is a
   // bulk destructive action, so require the confirmation the form sends rather
   // than acting on any request that reaches it.
-  if (text(formData, "confirm") !== "release-idle") {
+  const confirm = text(formData, "confirm");
+  if (confirm !== "release-idle" && confirm !== "release-all") {
     return { error: "Not confirmed.", fieldErrors: {}, success: null };
   }
+
+  /**
+   * Force ignores our own record of what is live.
+   *
+   * The normal sweep skips an ingress whose broadcast we have marked `live`,
+   * to avoid cutting off a game in progress. But broadcast status only
+   * advances when somebody loads a page, so a broadcast can sit marked `live`
+   * long after everyone went home — and those are precisely the ingresses that
+   * leak. Without a force option the sweep protects the worst offenders.
+   */
+  const force = confirm === "release-all";
 
   let ingresses: Awaited<ReturnType<typeof listAllIngresses>>;
   try {
@@ -614,11 +626,13 @@ export async function releaseIdleIngressesAction(
 
   const data = getDataSource();
   const broadcasts = await data.listBroadcasts();
-  const liveIngressIds = new Set(
-    broadcasts
-      .filter((b) => b.status === "live" && b.livekitIngressId)
-      .map((b) => b.livekitIngressId as string),
-  );
+  const liveIngressIds = force
+    ? new Set<string>()
+    : new Set(
+        broadcasts
+          .filter((b) => b.status === "live" && b.livekitIngressId)
+          .map((b) => b.livekitIngressId as string),
+      );
 
   let released = 0;
   let skipped = 0;
@@ -644,7 +658,14 @@ export async function releaseIdleIngressesAction(
         livekitIngressId: null,
         livekitRoomName: null,
         streamUrl: null,
-        ...(owner.status === "ended" ? {} : { status: "draft" }),
+        interruptedAt: null,
+        // A forced release ends whatever we thought was running: the ingress
+        // it depended on no longer exists.
+        ...(owner.status === "ended"
+          ? {}
+          : force
+            ? { status: "ended", endedAt: new Date().toISOString() }
+            : { status: "draft" }),
       });
     }
   }
@@ -653,8 +674,14 @@ export async function releaseIdleIngressesAction(
   revalidatePath("/admin");
 
   const parts = [`Released ${released} stream destination${released === 1 ? "" : "s"}.`];
-  if (skipped > 0) parts.push(`${skipped} skipped because a broadcast is live on it.`);
-  if (failures.length > 0) parts.push(`${failures.length} could not be deleted — see logs.`);
+  if (skipped > 0) {
+    parts.push(
+      `${skipped} skipped because a broadcast is still marked live. If no game is actually on the air, use Force release — a broadcast can stay marked live long after it ended.`,
+    );
+  }
+  if (failures.length > 0) {
+    parts.push(`${failures.length} could not be deleted (${failures.join(", ")}) — delete them in the LiveKit dashboard.`);
+  }
 
   return {
     error: failures.length > 0 ? parts.join(" ") : null,
